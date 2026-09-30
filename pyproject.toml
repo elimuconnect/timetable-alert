@@ -3,7 +3,7 @@ name = "Class-Alert"
 version = "0.1.2"
 description = ""
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 authors = [
     { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }
 ]
