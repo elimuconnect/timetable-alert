@@ -12,7 +12,8 @@ dependencies = [
     "flet-permission-handler",
     "pyjnius==1.7.0",
     "plyer",
-    "android-notify==1.61.3.dev0"
+    "android-notify==1.61.3.dev0",
+    "flet-webview-all"
 ]
 
 [dependency-groups]
