@@ -10,7 +10,7 @@ authors = [
 dependencies = [
     "flet>=0.83.1",
     "flet-permission-handler",
-    "pyjnius",
+    "pyjnius==1.7.0",
     "plyer",
     "android-notify==1.61.3.dev0"
 ]
