@@ -1,0 +1,54 @@
+[project]
+name = "Class-Alert"
+version = "0.1.2"
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }
+]
+dependencies = [
+    "flet>=0.83.1",
+    "flet-permission-handler",
+    "pyjnius",
+    "plyer",
+    "android-notify==1.61.3.dev0"
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli>=0.83.1",
+    "flet-desktop>=0.83.1",
+    "flet-web>=0.83.1",
+]
+
+[tool.flet]
+org = "zaim_tech.org"
+product = "ClassAlert"
+company = "Smart Elimu Connect"
+copyright = "Copyright (C) 2026 by zaim tech"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.android.permission]
+"android.permission.POST_NOTIFICATIONS" = true
+"android.permission.SCHEDULE_EXACT_ALARM" = true
+"android.permission.USE_EXACT_ALARM" = true
+"android.permission.WAKE_LOCK" = true
+"com.android.alarm.permission.SET_ALARM" = true
+"android.permission.RECEIVE_BOOT_COMPLETED" = true
+"android.permission.SYSTEM_ALERT_WINDOW" = true
+
+[tool.flet.splash]
+color = "#ffffff"
+dark_color = "#1B6911"
+
+[tool.flet.app.boot_screen]     # or [tool.flet.<PLATFORM>.app.boot_screen]
+show = true
+message = "Preparing the app ….."
+
+[tool.flet.app.startup_screen]      # or [tool.flet.<PLATFORM>.app.startup_screen]
+show = true
+message = "LOADING…"
+

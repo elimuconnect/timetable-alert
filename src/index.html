@@ -1,0 +1,4254 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>Smart Timetable Voice Alert</title>
+
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #eef6ff;
+      color: #222;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 25px;
+    }
+
+    h3 {
+      margin-top: 28px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+    }
+
+    input[type="text"],
+    input[type="file"] {
+      width: 100%;
+      padding: 11px;
+      font-size: 15px;
+      border: 1px solid #bbb;
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    button {
+      border: none;
+      border-radius: 7px;
+      padding: 11px 16px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .primary {
+      background: #1976d2;
+      color: white;
+    }
+
+    .secondary {
+      background: #555;
+      color: white;
+    }
+
+    .success {
+      background: #198754;
+      color: white;
+    }
+
+    .danger {
+      background: #dc3545;
+      color: white;
+    }
+
+    #status {
+      margin-top: 15px;
+      padding: 12px;
+      background: #ffffff;
+      border-radius: 8px;
+      font-weight: bold;
+    }
+
+    .monitor-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 20px;
+    }
+
+    .monitor-box {
+      background: #ffffff;
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .monitor-title {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #666;
+    }
+
+    .monitor-value {
+      font-size: 30px;
+      font-weight: bold;
+    }
+
+    .active {
+      color: #198754;
+    }
+
+    .inactive {
+      color: #dc3545;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #666;
+      margin-top: 5px;
+    }
+
+    .lesson-card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .lesson-name {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .lesson-meta {
+      margin-top: 8px;
+      color: #666;
+    }
+
+    #scheduleContainer,
+    #editor,
+    #alertLog {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 700px;
+    }
+
+    th,
+    td {
+      border: 1px solid #bbb;
+      padding: 9px;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    th {
+      background: #e9f2ff;
+    }
+
+    .schedule-day {
+      font-weight: bold;
+      background: #f2f2f2;
+    }
+
+    .alert-item {
+      border-bottom: 1px solid #ddd;
+      padding: 10px 5px;
+    }
+
+    .alert-item:last-child {
+      border-bottom: none;
+    }
+
+    .alert-time {
+      font-weight: bold;
+    }
+
+    .next-countdown {
+      margin-top: 8px;
+      font-weight: bold;
+    }
+
+    .timing-source {
+      margin-top: 10px;
+      padding: 10px;
+      background: #f4f8fc;
+      border-radius: 7px;
+      font-size: 13px;
+      color: #555;
+    }
+
+    @media (max-width: 700px) {
+
+      body {
+        padding: 10px;
+      }
+
+      .form-grid,
+      .monitor-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .button-row {
+        flex-direction: column;
+      }
+
+      button {
+        width: 100%;
+      }
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+  <h2>📘 Smart Timetable Voice Alert</h2>
+
+
+  <!-- ======================================================
+       TEACHER + FILE
+       ====================================================== -->
+
+  <div class="form-grid">
+
+    <div>
+
+      <label>
+        <strong>Teacher Name</strong>
+      </label>
+
+      <input
+        type="text"
+        id="teacherName"
+        placeholder="e.g. Solomon Ndegwa"
+      >
+
+    </div>
+
+
+    <div>
+
+      <label>
+        <strong>Timetable (.docx)</strong>
+      </label>
+
+      <input
+        type="file"
+        id="lessonFile"
+        accept=".docx"
+      >
+
+    </div>
+
+  </div>
+
+
+  <!-- ======================================================
+       BUTTONS
+       ====================================================== -->
+
+  <div class="button-row">
+
+    <button
+      class="primary"
+      id="loadBtn"
+      onclick="loadTimetable()"
+    >
+      📥 Load Timetable
+    </button>
+
+
+    <button
+      class="success"
+      id="startBtn"
+      onclick="startMonitoring()"
+      disabled
+    >
+      ▶ Start Monitoring
+    </button>
+
+
+    <button
+      class="danger"
+      id="stopBtn"
+      onclick="stopMonitoring()"
+      disabled
+    >
+      ⏹ Stop Monitoring
+    </button>
+
+  </div>
+
+
+  <div id="status">
+    Ready. Enter teacher name and load a timetable.
+  </div>
+
+
+  <!-- ======================================================
+       MONITOR
+       ====================================================== -->
+
+  <div class="monitor-grid">
+
+    <div class="monitor-box">
+
+      <div class="monitor-title">
+        Current Time
+      </div>
+
+      <div
+        id="currentTime"
+        class="monitor-value"
+      >
+        --:--
+      </div>
+
+      <div
+        id="currentDate"
+        class="small"
+      >
+        ---
+      </div>
+
+    </div>
+
+
+    <div class="monitor-box">
+
+      <div class="monitor-title">
+        Monitoring
+      </div>
+
+      <div
+        id="monitorState"
+        class="monitor-value inactive"
+      >
+        OFF
+      </div>
+
+      <div
+        id="lastCheck"
+        class="small"
+      >
+        Not running
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- ======================================================
+       NEXT LESSON
+       ====================================================== -->
+
+  <h3>📚 Next Lesson</h3>
+
+  <div
+    id="nextLesson"
+    class="lesson-card"
+  >
+
+    <div class="lesson-name">
+      No timetable loaded
+    </div>
+
+    <div class="lesson-meta">
+      Load a timetable to see your next lesson.
+    </div>
+
+  </div>
+
+
+  <!-- ======================================================
+       TEACHER SCHEDULE
+       ====================================================== -->
+
+  <h3>📅 Teacher Schedule</h3>
+
+  <div id="scheduleContainer">
+    No timetable loaded.
+  </div>
+
+
+  <!-- ======================================================
+       ALERT HISTORY
+       ====================================================== -->
+
+  <h3>🔔 Alert History</h3>
+
+  <div
+    id="alertLog"
+    class="alert-log"
+  >
+
+    <div class="small">
+      No alerts yet.
+    </div>
+
+  </div>
+
+
+  <!-- ======================================================
+       PREVIEW
+       ====================================================== -->
+
+  <h3>📄 Timetable Preview</h3>
+
+  <div id="editor">
+    No timetable loaded.
+  </div>
+
+</div>
+
+
+<script>
+
+/* ============================================================
+   GLOBAL VARIABLES
+   ============================================================ */
+
+let extractedRows = [];
+
+let teacherFullName = "";
+
+let teacherSchedule = [];
+
+let monitoringInterval = null;
+
+let clockInterval = null;
+
+let announcedAlerts = new Set();
+
+let alertHistory = [];
+
+window.FletBridge = window.FletBridge || {
+  postMessage: function(message) {
+    console.log("📤 FletBridge message:", message);
+  }
+};
+/* ============================================================
+   TIMETABLE HEADER INFORMATION
+   ============================================================
+
+   IMPORTANT:
+
+   THERE ARE NO HARDCODED LESSON TIMES.
+
+   Times are extracted directly from the uploaded DOCX
+   timetable header.
+
+   Example:
+
+   "8:20 – 9:00 Period 1"
+
+   becomes:
+
+   period = "period 1"
+   start  = "08:20"
+   end    = "09:00"
+
+   The actual time written in the uploaded timetable
+   is therefore used everywhere in this application.
+   ============================================================ */
+
+
+/* ============================================================
+   NORMALIZE TEXT
+   ============================================================ */
+
+function normalize(text) {
+
+  return (text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+}
+
+
+/* ============================================================
+   NORMALIZE TEACHER NAME
+   ============================================================ */
+
+function normalizeTeacherName(text) {
+
+  return normalize(text)
+    .replace(/\btr\.?\b/gi, "")
+    .replace(/\bmr\.?\b/gi, "")
+    .replace(/\bms\.?\b/gi, "")
+    .replace(/\bmrs\.?\b/gi, "")
+    .replace(/\bteacher\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+}
+
+
+/* ============================================================
+   NORMALIZE DAY
+   ============================================================ */
+
+function normalizeDay(text) {
+
+  const value =
+    normalize(text);
+
+  if (
+    value.startsWith("mon")
+  ) {
+    return "monday";
+  }
+
+  if (
+    value.startsWith("tue") ||
+    value.startsWith("tues")
+  ) {
+    return "tuesday";
+  }
+
+  if (
+    value.startsWith("wed")
+  ) {
+    return "wednesday";
+  }
+
+  if (
+    value.startsWith("thu") ||
+    value.startsWith("thur")
+  ) {
+    return "thursday";
+  }
+
+  if (
+    value.startsWith("fri")
+  ) {
+    return "friday";
+  }
+
+  return "";
+
+}
+
+
+/* ============================================================
+   EXTRACT PERIOD NUMBER FROM HEADER
+   ============================================================
+
+   Examples accepted:
+
+   Period 1
+   Period1
+   period 2
+   P1
+   p2
+   1
+   2
+
+   Also accepts headers containing times:
+
+   8:20 – 9:00 Period 1
+   9:00 – 9:40 Period 2
+   11:02– 11:42 Period 4
+
+   IMPORTANT:
+
+   We do NOT use the printed time for identifying the period.
+   ============================================================ */
+
+function normalizePeriod(text) {
+
+  const value =
+    normalize(text);
+
+  if (!value) {
+    return "";
+  }
+
+
+  /*
+     First look for "Period 1", "Period 2", etc.
+  */
+
+  let match =
+    value.match(
+      /\bperiod\s*([1-8])\b/i
+    );
+
+
+  if (match) {
+
+    return (
+      "period " +
+      parseInt(
+        match[1],
+        10
+      )
+    );
+
+  }
+
+
+  /*
+     Also support P1, P2, etc.
+  */
+
+  match =
+    value.match(
+      /\bp\s*([1-8])\b/i
+    );
+
+
+  if (match) {
+
+    return (
+      "period " +
+      parseInt(
+        match[1],
+        10
+      )
+    );
+
+  }
+
+
+  /*
+     Finally support a cell containing
+     only the number.
+  */
+
+  match =
+    value.match(
+      /^([1-8])$/
+    );
+
+
+  if (match) {
+
+    return (
+      "period " +
+      parseInt(
+        match[1],
+        10
+      )
+    );
+
+  }
+
+
+  return "";
+
+}
+
+
+/* ============================================================
+   PARSE TIME
+   ============================================================
+
+   Converts timetable time formats such as:
+
+   8:20
+   08:20
+   1:00
+   2:40
+   3:20
+
+   into HH:MM 24-hour format.
+
+   This function also handles AM/PM if the DOCX contains it.
+   ============================================================ */
+
+function parseTimetableTime(
+  value
+) {
+
+  if (!value) {
+    return null;
+  }
+
+
+  let text =
+    String(value)
+      .trim()
+      .toLowerCase();
+
+
+  /*
+     Extract:
+
+     8:20
+     08:20
+     1:00
+     12:30
+  */
+
+  const match =
+    text.match(
+      /(\d{1,2})\s*:\s*(\d{2})\s*(am|pm)?/i
+    );
+
+
+  if (!match) {
+    return null;
+  }
+
+
+  let hours =
+    parseInt(
+      match[1],
+      10
+    );
+
+  const minutes =
+    parseInt(
+      match[2],
+      10
+    );
+
+  const modifier =
+    match[3]
+      ? match[3].toLowerCase()
+      : "";
+
+
+  if (
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+
+    return null;
+
+  }
+
+
+  /*
+     Handle AM / PM.
+  */
+
+  if (modifier === "pm" && hours < 12) {
+
+    hours += 12;
+
+  }
+
+
+  if (modifier === "am" && hours === 12) {
+
+    hours = 0;
+
+  }
+
+
+  return (
+    String(hours).padStart(2, "0") +
+    ":" +
+    String(minutes).padStart(2, "0")
+  );
+
+}
+
+
+/* ============================================================
+   EXTRACT START + END TIME FROM PERIOD HEADER
+   ============================================================
+
+   Examples:
+
+   "8:20 – 9:00 Period 1"
+
+   "9:00 - 9:40 Period 2"
+
+   "11:02– 11:42 Period 4"
+
+   The function returns:
+
+   {
+      start: "08:20",
+      end: "09:00"
+   }
+
+   IMPORTANT:
+
+   These times come from the uploaded DOCX.
+   ============================================================ */
+
+function extractHeaderTimes(
+  header
+) {
+
+  if (!header) {
+    return null;
+  }
+
+
+  const text =
+    String(header)
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+
+  /*
+     Match two times separated by:
+
+     -
+     –
+     —
+  */
+
+  const match =
+    text.match(
+      /(\d{1,2}\s*:\s*\d{2}\s*(?:am|pm)?)\s*[-–—]\s*(\d{1,2}\s*:\s*\d{2}\s*(?:am|pm)?)/i
+    );
+
+
+  if (!match) {
+
+    return null;
+
+  }
+
+
+  const start =
+    parseTimetableTime(
+      match[1]
+    );
+
+
+  const end =
+    parseTimetableTime(
+      match[2]
+    );
+
+
+  if (
+    !start ||
+    !end
+  ) {
+
+    return null;
+
+  }
+
+
+  return {
+
+    start:
+      start,
+
+    end:
+      end
+
+  };
+
+}
+
+
+/* ============================================================
+   PARSE COMPLETE PERIOD HEADER
+   ============================================================
+
+   Example input:
+
+   "8:20 – 9:00 Period 1"
+
+   Output:
+
+   {
+      period: "period 1",
+      start: "08:20",
+      end: "09:00"
+   }
+
+   This is the ONLY source of lesson timing.
+   ============================================================ */
+
+function parsePeriodHeader(
+  header
+) {
+
+  const period =
+    normalizePeriod(
+      header
+    );
+
+
+  if (!period) {
+
+    return null;
+
+  }
+
+
+  const timing =
+    extractHeaderTimes(
+      header
+    );
+
+
+  /*
+     If the header contains a period number
+     but no time, we do not invent a time.
+  */
+
+  if (!timing) {
+
+    console.warn(
+      "⚠️ Period found but no time found in timetable header:",
+      header
+    );
+
+    return {
+
+      period:
+        period,
+
+      start:
+        null,
+
+      end:
+        null,
+
+      source:
+        header
+
+    };
+
+  }
+
+
+  return {
+
+    period:
+      period,
+
+    start:
+      timing.start,
+
+    end:
+      timing.end,
+
+    source:
+      header
+
+  };
+
+}
+
+
+/* ============================================================
+   CONVERT HH:MM TO MINUTES
+   ============================================================ */
+
+function timeToMinutes(time) {
+
+  if (!time) {
+    return null;
+  }
+
+
+  const parts =
+    time.split(":");
+
+
+  if (
+    parts.length < 2
+  ) {
+
+    return null;
+
+  }
+
+
+  const hours =
+    parseInt(
+      parts[0],
+      10
+    );
+
+
+  const minutes =
+    parseInt(
+      parts[1],
+      10
+    );
+
+
+  if (
+    Number.isNaN(hours) ||
+    Number.isNaN(minutes)
+  ) {
+
+    return null;
+
+  }
+
+
+  return (
+    hours * 60 +
+    minutes
+  );
+
+}
+
+
+/* ============================================================
+   FORMAT CURRENT TIME
+   ============================================================ */
+
+function formatTime(date) {
+
+  return date.toLocaleTimeString(
+    "en-KE",
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }
+  );
+
+}
+
+
+/* ============================================================
+   GET TODAY
+   ============================================================ */
+
+function getToday() {
+
+  return new Date()
+    .toLocaleDateString(
+      "en-KE",
+      {
+        weekday: "long"
+      }
+    )
+    .toLowerCase();
+
+}
+
+
+/* ============================================================
+   UPDATE CLOCK
+   ============================================================ */
+
+function updateClock() {
+
+  const now =
+    new Date();
+
+
+  document.getElementById(
+    "currentTime"
+  ).textContent =
+    formatTime(now);
+
+
+  document.getElementById(
+    "currentDate"
+  ).textContent =
+    now.toLocaleDateString(
+      "en-KE",
+      {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric"
+      }
+    );
+
+}
+
+
+/* ============================================================
+   START CLOCK
+   ============================================================ */
+
+function startClock() {
+
+  updateClock();
+
+
+  if (clockInterval) {
+
+    clearInterval(
+      clockInterval
+    );
+
+  }
+
+
+  clockInterval =
+    setInterval(
+      updateClock,
+      1000
+    );
+
+}
+
+
+/* ============================================================
+   LOAD TIMETABLE - FULLY OFFLINE DOCX READER
+   ============================================================
+
+   The app no longer uses online DOCX converter or any internet/CDN service.
+
+   A .docx file is a ZIP package containing WordprocessingML XML.
+   The small ZIP reader below opens that package locally in the
+   browser, reads word/document.xml, extracts the teacher table,
+   and passes the same extractedRows structure to the existing
+   schedule/alert code.
+
+   No timetable times are hardcoded here.
+   ============================================================ */
+
+async function loadTimetable() {
+
+  const fileInput =
+    document.getElementById(
+      "lessonFile"
+    );
+
+  const file =
+    fileInput.files[0];
+
+  const inputName =
+    document.getElementById(
+      "teacherName"
+    ).value.trim();
+
+  if (!file) {
+
+    alert(
+      "Please upload a .docx timetable."
+    );
+
+    return;
+
+  }
+
+  if (
+    !file.name
+      .toLowerCase()
+      .endsWith(".docx")
+  ) {
+
+    alert(
+      "Please upload a .docx file."
+    );
+
+    return;
+
+  }
+
+  if (!inputName) {
+
+    alert(
+      "Please enter the teacher name."
+    );
+
+    return;
+
+  }
+
+  teacherFullName =
+    inputName;
+
+  document.getElementById(
+    "status"
+  ).textContent =
+    "⏳ Reading timetable offline...";
+
+  try {
+
+    const arrayBuffer =
+      await file.arrayBuffer();
+
+    await processTimetableDOCX(
+      arrayBuffer
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Offline DOCX reader error:",
+      error
+    );
+
+    document.getElementById(
+      "status"
+    ).textContent =
+      "❌ Error reading timetable.";
+
+    alert(
+      "Error reading the DOCX file offline:\n\n" +
+      (error.message || error)
+    );
+
+  }
+
+}
+
+
+/* ============================================================
+   OFFLINE ZIP READER
+   ============================================================ */
+
+function findZipEndOfCentralDirectory(
+  bytes
+) {
+
+  const minimumOffset =
+    Math.max(
+      0,
+      bytes.length - 65557
+    );
+
+  for (
+    let i = bytes.length - 22;
+    i >= minimumOffset;
+    i--
+  ) {
+
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x05 &&
+      bytes[i + 3] === 0x06
+    ) {
+
+      return i;
+
+    }
+
+  }
+
+  throw new Error(
+    "This file is not a valid DOCX/ZIP package."
+  );
+
+}
+
+
+function readUInt16LE(
+  view,
+  offset
+) {
+
+  return view.getUint16(
+    offset,
+    true
+  );
+
+}
+
+
+function readUInt32LE(
+  view,
+  offset
+) {
+
+  return view.getUint32(
+    offset,
+    true
+  );
+
+}
+
+
+async function inflateZipEntry(
+  compressedBytes,
+  compressionMethod,
+  uncompressedSize
+) {
+
+  if (
+    compressionMethod === 0
+  ) {
+
+    return compressedBytes;
+
+  }
+
+  if (
+    compressionMethod !== 8
+  ) {
+
+    throw new Error(
+      "Unsupported DOCX compression method: " +
+      compressionMethod
+    );
+
+  }
+
+  if (
+    typeof DecompressionStream ===
+    "undefined"
+  ) {
+
+    throw new Error(
+      "This browser does not support offline DOCX decompression. " +
+      "Please use a recent Chrome, Edge, or Android WebView."
+    );
+
+  }
+
+  const stream =
+    new Blob(
+      [compressedBytes]
+    )
+    .stream()
+    .pipeThrough(
+      new DecompressionStream(
+        "deflate-raw"
+      )
+    );
+
+  const buffer =
+    await new Response(
+      stream
+    ).arrayBuffer();
+
+  const result =
+    new Uint8Array(
+      buffer
+    );
+
+  if (
+    Number.isFinite(
+      uncompressedSize
+    ) &&
+    uncompressedSize > 0 &&
+    result.length !== uncompressedSize
+  ) {
+
+    console.warn(
+      "DOCX entry size differs from ZIP header:",
+      result.length,
+      uncompressedSize
+    );
+
+  }
+
+  return result;
+
+}
+
+
+async function readZipEntries(
+  arrayBuffer
+) {
+
+  const bytes =
+    new Uint8Array(
+      arrayBuffer
+    );
+
+  const view =
+    new DataView(
+      arrayBuffer
+    );
+
+  const eocd =
+    findZipEndOfCentralDirectory(
+      bytes
+    );
+
+  const totalEntries =
+    readUInt16LE(
+      view,
+      eocd + 10
+    );
+
+  const centralDirectorySize =
+    readUInt32LE(
+      view,
+      eocd + 12
+    );
+
+  const centralDirectoryOffset =
+    readUInt32LE(
+      view,
+      eocd + 16
+    );
+
+  /*
+     Standard DOCX files use normal ZIP32
+     central-directory offsets. Reject ZIP64
+     here rather than silently reading the
+     wrong bytes.
+  */
+  if (
+    totalEntries === 0xffff ||
+    centralDirectoryOffset === 0xffffffff ||
+    centralDirectorySize === 0xffffffff
+  ) {
+
+    throw new Error(
+      "ZIP64 DOCX files are not supported by this offline reader."
+    );
+
+  }
+
+  const decoder =
+    new TextDecoder(
+      "utf-8"
+    );
+
+  const entries =
+    new Map();
+
+  let cursor =
+    centralDirectoryOffset;
+
+  for (
+    let i = 0;
+    i < totalEntries;
+    i++
+  ) {
+
+    if (
+      readUInt32LE(
+        view,
+        cursor
+      ) !== 0x02014b50
+    ) {
+
+      throw new Error(
+        "Invalid DOCX central directory."
+      );
+
+    }
+
+    const flags =
+      readUInt16LE(
+        view,
+        cursor + 8
+      );
+
+    const compressionMethod =
+      readUInt16LE(
+        view,
+        cursor + 10
+      );
+
+    const compressedSize =
+      readUInt32LE(
+        view,
+        cursor + 20
+      );
+
+    const uncompressedSize =
+      readUInt32LE(
+        view,
+        cursor + 24
+      );
+
+    const nameLength =
+      readUInt16LE(
+        view,
+        cursor + 28
+      );
+
+    const extraLength =
+      readUInt16LE(
+        view,
+        cursor + 30
+      );
+
+    const commentLength =
+      readUInt16LE(
+        view,
+        cursor + 32
+      );
+
+    const localHeaderOffset =
+      readUInt32LE(
+        view,
+        cursor + 42
+      );
+
+    const nameBytes =
+      bytes.slice(
+        cursor + 46,
+        cursor + 46 + nameLength
+      );
+
+    const filename =
+      decoder.decode(
+        nameBytes
+      );
+
+    entries.set(
+      filename,
+      {
+        flags,
+        compressionMethod,
+        compressedSize,
+        uncompressedSize,
+        localHeaderOffset
+      }
+    );
+
+    cursor +=
+      46 +
+      nameLength +
+      extraLength +
+      commentLength;
+
+  }
+
+  async function readEntry(
+    filename
+  ) {
+
+    const entry =
+      entries.get(
+        filename
+      );
+
+    if (!entry) {
+
+      throw new Error(
+        "DOCX file does not contain " +
+        filename
+      );
+
+    }
+
+    const localOffset =
+      entry.localHeaderOffset;
+
+    if (
+      readUInt32LE(
+        view,
+        localOffset
+      ) !== 0x04034b50
+    ) {
+
+      throw new Error(
+        "Invalid DOCX local file header."
+      );
+
+    }
+
+    const localNameLength =
+      readUInt16LE(
+        view,
+        localOffset + 26
+      );
+
+    const localExtraLength =
+      readUInt16LE(
+        view,
+        localOffset + 28
+      );
+
+    const dataOffset =
+      localOffset +
+      30 +
+      localNameLength +
+      localExtraLength;
+
+    const compressedBytes =
+      bytes.slice(
+        dataOffset,
+        dataOffset +
+        entry.compressedSize
+      );
+
+    return inflateZipEntry(
+      compressedBytes,
+      entry.compressionMethod,
+      entry.uncompressedSize
+    );
+
+  }
+
+  return {
+    entries,
+    readEntry
+  };
+
+}
+
+
+/* ============================================================
+   WORD XML HELPERS
+   ============================================================ */
+
+function wordLocalName(
+  node
+) {
+
+  return (
+    node.localName ||
+    node.nodeName.split(":").pop()
+  );
+
+}
+
+
+function directWordChildren(
+  node,
+  name
+) {
+
+  return Array.from(
+    node.childNodes || []
+  ).filter(
+    child =>
+      child.nodeType === 1 &&
+      wordLocalName(child) === name
+  );
+
+}
+
+
+function allWordDescendants(
+  node,
+  name
+) {
+
+  return Array.from(
+    node.getElementsByTagNameNS(
+      "*",
+      name
+    )
+  );
+
+}
+
+
+function getWordNodeText(
+  node
+) {
+
+  const textNodes =
+    allWordDescendants(
+      node,
+      "t"
+    );
+
+  return textNodes
+    .map(
+      n =>
+        n.textContent || ""
+    )
+    .join("")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+}
+
+
+/*
+   Word can split visible text between
+   multiple w:t elements. getWordNodeText()
+   deliberately joins them without inserting
+   spaces because Word's XML normally keeps
+   the intended spacing in the text runs.
+*/
+
+
+function getCellGridSpan(
+  cell
+) {
+
+  const props =
+    directWordChildren(
+      cell,
+      "tcPr"
+    )[0];
+
+  if (!props) {
+    return 1;
+  }
+
+  const gridSpan =
+    directWordChildren(
+      props,
+      "gridSpan"
+    )[0];
+
+  if (!gridSpan) {
+    return 1;
+  }
+
+  const value =
+    gridSpan.getAttribute(
+      "w:val"
+    ) ||
+    gridSpan.getAttribute(
+      "val"
+    );
+
+  const span =
+    parseInt(
+      value,
+      10
+    );
+
+  return (
+    Number.isFinite(span) &&
+    span > 0
+  )
+    ? span
+    : 1;
+
+}
+
+
+function wordTableToRows(
+  table
+) {
+
+  const wordRows =
+    directWordChildren(
+      table,
+      "tr"
+    );
+
+  /*
+     Match the old extraction as closely as
+     possible: every Word table cell becomes
+     one extracted cell. The existing schedule
+     builder then uses the same row/column
+     indexes it used before.
+  */
+  return wordRows
+    .map(
+      wordRow => {
+
+        const cells =
+          directWordChildren(
+            wordRow,
+            "tc"
+          );
+
+        return cells
+          .map(
+            cell =>
+              getWordNodeText(
+                cell
+              )
+                .replace(/\s+/g, " ")
+                .trim()
+          );
+
+      }
+    )
+    .filter(
+      row =>
+        row.length > 0
+    );
+
+}
+
+
+function buildOfflineTableHTML(
+  rows
+) {
+
+  let html =
+    "<table>";
+
+  for (
+    const row of rows
+  ) {
+
+    html +=
+      "<tr>";
+
+    for (
+      const cell of row
+    ) {
+
+      html +=
+        "<td>" +
+        escapeHTML(
+          cell
+        ) +
+        "</td>";
+
+    }
+
+    html +=
+      "</tr>";
+
+  }
+
+  html +=
+    "</table>";
+
+  return html;
+
+}
+
+
+function escapeHTML(
+  value
+) {
+
+  return String(
+    value || ""
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&#39;"
+    );
+
+}
+
+
+/* ============================================================
+   PROCESS DOCX DIRECTLY
+   ============================================================ */
+
+async function processTimetableDOCX(
+  arrayBuffer
+) {
+
+  const zip =
+    await readZipEntries(
+      arrayBuffer
+    );
+
+  const documentBytes =
+    await zip.readEntry(
+      "word/document.xml"
+    );
+
+  const decoder =
+    new TextDecoder(
+      "utf-8"
+    );
+
+  const documentXML =
+    decoder.decode(
+      documentBytes
+    );
+
+  const parser =
+    new DOMParser();
+
+  const doc =
+    parser.parseFromString(
+      documentXML,
+      "application/xml"
+    );
+
+  const parserError =
+    doc.querySelector(
+      "parsererror"
+    );
+
+  if (parserError) {
+
+    throw new Error(
+      "The DOCX document.xml could not be parsed."
+    );
+
+  }
+
+  const body =
+    Array.from(
+      doc.getElementsByTagNameNS(
+        "*",
+        "body"
+      )
+    )[0];
+
+  if (!body) {
+
+    throw new Error(
+      "No Word document body was found."
+    );
+
+  }
+
+  const bodyChildren =
+    Array.from(
+      body.childNodes || []
+    ).filter(
+      node =>
+        node.nodeType === 1
+    );
+
+  const normalizedTeacher =
+    normalizeTeacherName(
+      teacherFullName
+    );
+
+  let foundTable =
+    null;
+
+  /*
+     First reproduce the old online DOCX converter
+     behavior: if a paragraph containing
+     the teacher name is followed by a
+     table, use that table.
+  */
+  for (
+    let i = 0;
+    i < bodyChildren.length;
+    i++
+  ) {
+
+    const element =
+      bodyChildren[i];
+
+    const elementText =
+      normalizeTeacherName(
+        getWordNodeText(
+          element
+        )
+      );
+
+    if (
+      elementText &&
+      elementText.includes(
+        normalizedTeacher
+      )
+    ) {
+
+      for (
+        let j = i + 1;
+        j < bodyChildren.length;
+        j++
+      ) {
+
+        if (
+          wordLocalName(
+            bodyChildren[j]
+          ) === "tbl"
+        ) {
+
+          foundTable =
+            bodyChildren[j];
+
+          break;
+
+        }
+
+        /*
+           Stop if another teacher/table
+           section begins before a table.
+        */
+        if (
+          wordLocalName(
+            bodyChildren[j]
+          ) === "p"
+        ) {
+
+          const nextText =
+            normalizeTeacherName(
+              getWordNodeText(
+                bodyChildren[j]
+              )
+            );
+
+          if (
+            nextText &&
+            nextText !==
+              normalizedTeacher
+          ) {
+
+            break;
+
+          }
+
+        }
+
+      }
+
+    }
+
+    if (foundTable) {
+      break;
+    }
+
+  }
+
+  /*
+     Fallback: find a table that itself
+     contains the teacher name.
+  */
+  if (!foundTable) {
+
+    const tables =
+      allWordDescendants(
+        body,
+        "tbl"
+      );
+
+    for (
+      const table of tables
+    ) {
+
+      const tableText =
+        normalizeTeacherName(
+          getWordNodeText(
+            table
+          )
+        );
+
+      if (
+        tableText.includes(
+          normalizedTeacher
+        )
+      ) {
+
+        foundTable =
+          table;
+
+        break;
+
+      }
+
+    }
+
+  }
+
+  /*
+     Final fallback: first timetable table.
+     This keeps the original application's
+     fallback behavior.
+  */
+  if (!foundTable) {
+
+    const tables =
+      allWordDescendants(
+        body,
+        "tbl"
+      );
+
+    if (
+      tables.length > 0
+    ) {
+
+      foundTable =
+        tables[0];
+
+    }
+
+  }
+
+  if (!foundTable) {
+
+    document.getElementById(
+      "status"
+    ).textContent =
+      "❌ No timetable table found.";
+
+    document.getElementById(
+      "editor"
+    ).innerHTML =
+      "<p>No Word table was found in this DOCX.</p>";
+
+    return;
+
+  }
+
+  /*
+     Convert the selected Word table into
+     the same two-dimensional extractedRows
+     structure used by the existing schedule
+     builder.
+  */
+  extractedRows =
+    wordTableToRows(
+      foundTable
+    );
+
+  console.log(
+    "📊 Extracted timetable rows OFFLINE:",
+    extractedRows
+  );
+
+  document.getElementById(
+    "editor"
+  ).innerHTML =
+    buildOfflineTableHTML(
+      extractedRows
+    );
+
+  /*
+     IMPORTANT:
+     The existing schedule builder remains
+     unchanged. It reads the actual period
+     header cells extracted from document.xml.
+  */
+  buildTeacherSchedule();
+
+  /* ============================================================
+     SAVE SUCCESSFULLY PROCESSED TIMETABLE
+     ============================================================ */
+
+  if (
+    teacherSchedule.length > 0
+  ) {
+
+    saveTimetableToLocalStorage();
+
+  }
+
+/* ============================================================
+   SAVE SUCCESSFULLY PROCESSED TIMETABLE
+   ============================================================ */
+
+if (teacherSchedule.length > 0) {
+
+  saveTimetableToLocalStorage();
+
+}
+  
+
+
+  if (
+    teacherSchedule.length === 0
+  ) {
+
+    document.getElementById(
+      "status"
+    ).textContent =
+      "⚠️ Timetable loaded, but no teaching lessons were found for " +
+      teacherFullName;
+
+  } else {
+
+    document.getElementById(
+      "status"
+    ).textContent =
+      "✅ Timetable loaded for " +
+      teacherFullName;
+
+  }
+
+
+  document.getElementById(
+    "startBtn"
+  ).disabled =
+    teacherSchedule.length === 0;
+
+
+  document.getElementById(
+    "loadBtn"
+  ).disabled =
+    false;
+
+
+  renderSchedule();
+
+
+  updateNextLesson();
+
+}
+
+
+
+
+
+
+
+
+
+
+/* ============================================================
+   LOCAL STORAGE — SAVE TIMETABLE
+   ============================================================ */
+
+function saveTimetableToLocalStorage() {
+
+  try {
+
+    const timetableData = {
+
+      teacherFullName:
+        teacherFullName,
+
+      extractedRows:
+        extractedRows,
+
+      teacherSchedule:
+        teacherSchedule,
+
+      editorHTML:
+        document.getElementById("editor").innerHTML,
+
+      savedAt:
+        new Date().toISOString()
+
+    };
+
+
+    localStorage.setItem(
+      "smartTimetableSavedData",
+      JSON.stringify(timetableData)
+    );
+
+
+    console.log(
+      "💾 TIMETABLE SAVED TO LOCAL STORAGE:",
+      timetableData
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      "❌ Could not save timetable to local storage:",
+      error
+    );
+
+  }
+
+}
+
+
+/* ============================================================
+   LOCAL STORAGE — LOAD SAVED TIMETABLE
+   ============================================================ */
+
+function loadSavedTimetableFromLocalStorage() {
+
+  try {
+
+    const saved =
+      localStorage.getItem(
+        "smartTimetableSavedData"
+      );
+
+
+    if (!saved) {
+
+      console.log(
+        "ℹ️ No previously saved timetable found."
+      );
+
+      return false;
+
+    }
+
+
+    const timetableData =
+      JSON.parse(saved);
+
+
+    if (
+      !timetableData ||
+      !Array.isArray(
+        timetableData.teacherSchedule
+      )
+    ) {
+
+      console.warn(
+        "⚠️ Saved timetable data is invalid."
+      );
+
+      return false;
+
+    }
+
+
+    /* ----------------------------------------
+       Restore teacher name
+       ---------------------------------------- */
+
+    teacherFullName =
+      timetableData.teacherFullName || "";
+
+
+    document.getElementById(
+      "teacherName"
+    ).value =
+      teacherFullName;
+
+
+    /* ----------------------------------------
+       Restore extracted rows
+       
+       IMPORTANT:
+       This does NOT replace extractedRows.
+       It simply restores its previous value.
+       ---------------------------------------- */
+
+    extractedRows =
+      Array.isArray(
+        timetableData.extractedRows
+      )
+        ? timetableData.extractedRows
+        : [];
+
+
+    /* ----------------------------------------
+       Restore teacher schedule
+       ---------------------------------------- */
+
+    teacherSchedule =
+      timetableData.teacherSchedule;
+
+
+    /* ----------------------------------------
+       Restore original timetable preview
+       ---------------------------------------- */
+
+    if (
+      timetableData.editorHTML
+    ) {
+
+      document.getElementById(
+        "editor"
+      ).innerHTML =
+        timetableData.editorHTML;
+
+    }
+
+
+    /* ----------------------------------------
+       Update interface
+       ---------------------------------------- */
+
+    if (
+      teacherSchedule.length > 0
+    ) {
+
+      document.getElementById(
+        "status"
+      ).textContent =
+        "💾 Saved timetable restored for " +
+        teacherFullName;
+
+
+      document.getElementById(
+        "startBtn"
+      ).disabled =
+        false;
+
+    }
+
+
+    /* ----------------------------------------
+       Render restored timetable
+       ---------------------------------------- */
+
+    renderSchedule();
+
+    updateNextLesson();
+
+    renderAlertHistory();
+
+
+    console.log(
+      "📂 SAVED TIMETABLE RESTORED:"
+    );
+
+
+    console.log(
+      JSON.stringify(
+        timetableData,
+        null,
+        2
+      )
+    );
+
+
+    console.log(
+      "📅 Restored teacher schedule:",
+      teacherSchedule
+    );
+
+
+    return true;
+
+
+  } catch (error) {
+
+    console.error(
+      "❌ Could not restore saved timetable:",
+      error
+    );
+
+
+    return false;
+
+  }
+
+}
+
+
+
+
+
+
+
+
+
+
+
+  
+/* ============================================================
+   BUILD TEACHER SCHEDULE
+   ============================================================
+
+   THIS IS THE IMPORTANT CHANGE.
+
+   We no longer use:
+
+       periodTimes
+
+   We no longer use:
+
+       nonTeachingTimes
+
+   Every lesson gets its start/end time from the
+   uploaded timetable header.
+   ============================================================ */
+
+function buildTeacherSchedule() {
+
+  teacherSchedule = [];
+
+
+  if (
+    !extractedRows ||
+    extractedRows.length === 0
+  ) {
+
+    return;
+
+  }
+
+
+  /*
+     Find the header row.
+
+     We search the first several rows for
+     a cell containing:
+
+     Period 1
+     Period 2
+     etc.
+  */
+
+  let headerRowIndex = -1;
+
+
+  for (
+    let r = 0;
+    r < Math.min(
+      extractedRows.length,
+      6
+    );
+    r++
+  ) {
+
+    const row =
+      extractedRows[r];
+
+
+    const hasPeriodHeader =
+      row.some(
+        cell =>
+          normalizePeriod(
+            cell
+          )
+      );
+
+
+    if (
+      hasPeriodHeader
+    ) {
+
+      headerRowIndex =
+        r;
+
+      break;
+
+    }
+
+  }
+
+
+  if (
+    headerRowIndex === -1
+  ) {
+
+    console.warn(
+      "❌ Could not identify timetable header."
+    );
+
+
+    console.warn(
+      "Extracted rows:",
+      extractedRows
+    );
+
+
+    return;
+
+  }
+
+
+  const headerRow =
+    extractedRows[
+      headerRowIndex
+    ];
+
+
+  console.log(
+    "🕒 Timetable header:",
+    headerRow
+  );
+
+
+  /*
+     Build period columns from the
+     actual DOCX header.
+
+     Example:
+
+     column 2:
+     8:20 – 9:00 Period 1
+
+     becomes:
+
+     {
+       column: 2,
+       period: "period 1",
+       start: "08:20",
+       end: "09:00"
+     }
+  */
+
+  const periodColumns = [];
+
+
+  for (
+    let c = 0;
+    c < headerRow.length;
+    c++
+  ) {
+
+    const header =
+      headerRow[c];
+
+
+    const parsed =
+      parsePeriodHeader(
+        header
+      );
+
+
+    if (!parsed) {
+
+      continue;
+
+    }
+
+
+    /*
+       Do not create a lesson if
+       the timetable header has no
+       usable time.
+
+       We NEVER invent the time.
+    */
+
+    if (
+      !parsed.start ||
+      !parsed.end
+    ) {
+
+      console.warn(
+        "⚠️ Skipping period because timetable header has no usable time:",
+        header
+      );
+
+      continue;
+
+    }
+
+
+    periodColumns.push({
+
+      column:
+        c,
+
+      period:
+        parsed.period,
+
+      start:
+        parsed.start,
+
+      end:
+        parsed.end,
+
+      source:
+        parsed.source
+
+    });
+
+  }
+
+
+  console.log(
+    "⏰ PERIODS READ DIRECTLY FROM UPLOADED TIMETABLE:",
+    periodColumns
+  );
+
+
+  /*
+     If no period columns were found,
+     stop here.
+  */
+
+  if (
+    periodColumns.length === 0
+  ) {
+
+    console.warn(
+      "❌ No timed teaching periods found in timetable header."
+    );
+
+    return;
+
+  }
+
+
+  /*
+     Read each day.
+  */
+
+  for (
+    let r =
+      headerRowIndex + 1;
+
+    r < extractedRows.length;
+
+    r++
+  ) {
+
+    const row =
+      extractedRows[r];
+
+
+    if (
+      row.length === 0
+    ) {
+
+      continue;
+
+    }
+
+
+    const day =
+      normalizeDay(
+        row[0]
+      );
+
+
+    if (!day) {
+
+      continue;
+
+    }
+
+
+    /*
+       Check every period column.
+    */
+
+    for (
+      const periodColumn
+      of periodColumns
+    ) {
+
+      const lesson =
+        (
+          row[
+            periodColumn.column
+          ] || ""
+        )
+        .trim();
+
+
+      if (!lesson) {
+
+        continue;
+
+      }
+
+
+      /*
+         Ignore assembly, breaks,
+         lunch, games, etc.
+
+         This is based on the actual
+         cell content, NOT hardcoded
+         times.
+      */
+
+      if (
+        isNonTeachingLesson(
+          lesson
+        )
+      ) {
+
+        continue;
+
+      }
+
+
+      const cleanLesson =
+        cleanLessonText(
+          lesson
+        );
+
+
+      if (!cleanLesson) {
+
+        continue;
+
+      }
+
+
+      teacherSchedule.push({
+
+        day:
+          day,
+
+        period:
+          periodColumn.period,
+
+        start:
+          periodColumn.start,
+
+        end:
+          periodColumn.end,
+
+        lesson:
+          cleanLesson,
+
+        column:
+          periodColumn.column,
+
+        row:
+          r,
+
+        timeSource:
+          periodColumn.source
+
+      });
+
+    }
+
+  }
+
+
+  console.log(
+    "📚 FINAL TEACHER SCHEDULE:",
+    teacherSchedule
+  );
+
+
+  /*
+     Extra diagnostic output.
+
+     This makes it very easy to verify
+     that the application is using the
+     DOCX times.
+  */
+
+  teacherSchedule.forEach(
+    lesson => {
+
+      console.log(
+        "TIMETABLE LESSON:",
+        lesson.day,
+        lesson.period,
+        lesson.start +
+        " – " +
+        lesson.end,
+        lesson.lesson
+      );
+
+    }
+  );
+
+
+  /* ============================================================
+     ADDITIONAL JSON CONSOLE OUTPUT
+     ============================================================
+
+     This does NOT replace extractedRows.
+
+     It does NOT replace teacherSchedule.
+
+     It simply creates another JSON representation
+     of the already extracted teacher timetable.
+
+     The times are still taken directly from the
+     uploaded timetable.
+     ============================================================ */
+
+  const teacherScheduleJSONRows =
+    teacherSchedule.map(
+      lesson => ({
+
+        Day:
+          capitalize(
+            lesson.day
+          ),
+
+        Period:
+          capitalize(
+            lesson.period
+          ),
+
+        Time:
+          `${lesson.start} – ${lesson.end}`,
+
+        Lesson:
+          lesson.lesson
+
+      })
+    );
+
+
+  console.log(
+    "📦 TEACHER SCHEDULE JSON ROWS:"
+  );
+
+
+  console.log(
+    JSON.stringify(
+      teacherScheduleJSONRows,
+      null,
+      2
+    )
+  );
+  FletBridge.postMessage(
+    JSON.stringify(
+      teacherScheduleJSONRows,
+      null,
+      2
+    )
+  );
+
+}
+/* ============================================================
+   CLEAN LESSON
+   ============================================================ */
+
+function cleanLessonText(
+  text
+) {
+
+  return text
+    .replace(/\n+/g, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+}
+
+
+/* ============================================================
+   IDENTIFY NON-TEACHING CONTENT
+   ============================================================ */
+
+function isNonTeachingLesson(
+  lesson
+) {
+
+  const value =
+    normalize(
+      lesson
+    );
+
+
+  if (!value) {
+
+    return true;
+
+  }
+
+
+  const patterns = [
+
+    /^break$/i,
+
+    /short break/i,
+
+    /long break/i,
+
+    /lunch/i,
+
+    /assembly/i,
+
+    /games/i,
+
+    /societies/i,
+
+    /clubs/i,
+
+    /^prep$/i,
+
+    /free period/i,
+
+    /tea break/i,
+
+    /registration/i
+
+  ];
+
+
+  return patterns.some(
+    pattern =>
+      pattern.test(value)
+  );
+
+}
+
+
+/* ============================================================
+   RENDER TEACHER SCHEDULE
+   ============================================================ */
+
+function renderSchedule() {
+
+  const container =
+    document.getElementById(
+      "scheduleContainer"
+    );
+
+
+  if (
+    teacherSchedule.length === 0
+  ) {
+
+    container.innerHTML =
+      "<div class='small'>" +
+      "No teaching lessons found." +
+      "</div>";
+
+    return;
+
+  }
+
+
+  const days = [
+
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday"
+
+  ];
+
+
+  let html = "";
+
+
+  html += "<table>";
+
+  html += "<thead>";
+
+  html += "<tr>";
+
+  html += "<th>Day</th>";
+
+  html += "<th>Period</th>";
+
+  html += "<th>Time From Uploaded Timetable</th>";
+
+  html += "<th>Lesson</th>";
+
+  html += "</tr>";
+
+  html += "</thead>";
+
+  html += "<tbody>";
+
+
+  for (
+    const day of days
+  ) {
+
+    const lessons =
+      teacherSchedule
+        .filter(
+          item =>
+            item.day === day
+        )
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            timeToMinutes(
+              a.start
+            ) -
+            timeToMinutes(
+              b.start
+            )
+        );
+
+
+    for (
+      const lesson
+      of lessons
+    ) {
+
+      html += "<tr>";
+
+
+      html +=
+        "<td class='schedule-day'>" +
+        capitalize(day) +
+        "</td>";
+
+
+      html +=
+        "<td>" +
+        capitalize(
+          lesson.period
+        ) +
+        "</td>";
+
+
+      html +=
+        "<td>" +
+        lesson.start +
+        " – " +
+        lesson.end +
+        "</td>";
+
+
+      html +=
+        "<td>" +
+        escapeHTML(
+          lesson.lesson
+        ) +
+        "</td>";
+
+
+      html += "</tr>";
+
+    }
+
+  }
+
+
+  html += "</tbody>";
+
+  html += "</table>";
+
+
+  html +=
+    "<div class='timing-source'>" +
+    "⏱️ All lesson times shown above are read directly from the uploaded timetable. " +
+    "No lesson time is hard-coded in this application." +
+    "</div>";
+
+
+  container.innerHTML =
+    html;
+
+}
+
+
+/* ============================================================
+   CAPITALIZE
+   ============================================================ */
+
+function capitalize(
+  text
+) {
+
+  if (!text) {
+
+    return "";
+
+  }
+
+
+  return (
+    text.charAt(0)
+      .toUpperCase() +
+    text.slice(1)
+  );
+
+}
+
+
+/* ============================================================
+   ESCAPE HTML
+   ============================================================ */
+
+function escapeHTML(
+  text
+) {
+
+  const div =
+    document.createElement(
+      "div"
+    );
+
+
+  div.textContent =
+    text;
+
+
+  return div.innerHTML;
+
+}
+
+
+/* ============================================================
+   START MONITORING
+   ============================================================ */
+
+function startMonitoring() {
+
+  if (
+    teacherSchedule.length === 0
+  ) {
+
+    alert(
+      "Please load a timetable first."
+    );
+
+    return;
+
+  }
+
+
+  if (monitoringInterval) {
+
+    clearInterval(
+      monitoringInterval
+    );
+
+  }
+
+
+  announcedAlerts.clear();
+
+
+  monitoringInterval =
+    setInterval(
+      checkTimetable,
+      10000
+    );
+
+
+  checkTimetable();
+
+
+  document.getElementById(
+    "monitorState"
+  ).textContent =
+    "ON";
+
+
+  document.getElementById(
+    "monitorState"
+  ).className =
+    "monitor-value active";
+
+
+  document.getElementById(
+    "lastCheck"
+  ).textContent =
+    "Monitoring every 10 seconds";
+
+
+  document.getElementById(
+    "startBtn"
+  ).disabled =
+    true;
+
+
+  document.getElementById(
+    "stopBtn"
+  ).disabled =
+    false;
+
+
+  document.getElementById(
+    "status"
+  ).textContent =
+    "🟢 Monitoring started for " +
+    teacherFullName;
+
+}
+
+
+/* ============================================================
+   STOP MONITORING
+   ============================================================ */
+
+function stopMonitoring() {
+
+  if (monitoringInterval) {
+
+    clearInterval(
+      monitoringInterval
+    );
+
+
+    monitoringInterval =
+      null;
+
+  }
+
+
+  document.getElementById(
+    "monitorState"
+  ).textContent =
+    "OFF";
+
+
+  document.getElementById(
+    "monitorState"
+  ).className =
+    "monitor-value inactive";
+
+
+  document.getElementById(
+    "lastCheck"
+  ).textContent =
+    "Not running";
+
+
+  document.getElementById(
+    "startBtn"
+  ).disabled =
+    teacherSchedule.length === 0;
+
+
+  document.getElementById(
+    "stopBtn"
+  ).disabled =
+    true;
+
+
+  document.getElementById(
+    "status"
+  ).textContent =
+    "⏹ Monitoring stopped.";
+
+}
+
+
+/* ============================================================
+   CHECK TIMETABLE
+   ============================================================
+
+   IMPORTANT:
+
+   Lesson times come ONLY from the uploaded timetable.
+
+   There are NO hard-coded lesson times here.
+
+   Example uploaded timetable:
+
+   11:20 – 12:00 Period 4
+
+   Alert window:
+
+   11:18:00
+   through
+   11:19:59
+
+   The alert is triggered exactly 2 minutes
+   before the uploaded lesson start time.
+   ============================================================ */
+
+function checkTimetable() {
+
+  if (
+    teacherSchedule.length === 0
+  ) {
+
+    return;
+
+  }
+
+
+  const now =
+    new Date();
+
+
+  const today =
+    getToday();
+
+
+  /*
+     Use seconds, not only minutes.
+
+     Example:
+
+     11:18:06
+
+     becomes:
+
+     11 * 3600 +
+     18 * 60 +
+     6
+  */
+
+  const currentSeconds =
+    (
+      now.getHours() * 3600
+    ) +
+    (
+      now.getMinutes() * 60
+    ) +
+    now.getSeconds();
+
+
+  document.getElementById(
+    "lastCheck"
+  ).textContent =
+    "Last check: " +
+    formatTime(now);
+
+
+  console.log(
+    "🔔 Checking:",
+    today,
+    formatTime(now)
+  );
+
+
+  /*
+     Check only today's lessons.
+
+     We NEVER alert for Monday while
+     it is still Friday.
+
+     The teacher must receive the alert
+     on the actual lesson day.
+  */
+
+  const todayLessons =
+    teacherSchedule.filter(
+      lesson =>
+        lesson.day === today
+    );
+
+
+  todayLessons.forEach(
+    lesson => {
+
+      /*
+         The lesson start comes directly
+         from the uploaded DOCX.
+      */
+
+      const lessonStartMinutes =
+        timeToMinutes(
+          lesson.start
+        );
+
+
+      if (
+        lessonStartMinutes === null
+      ) {
+
+        console.warn(
+          "⚠️ Invalid lesson start time:",
+          lesson
+        );
+
+        return;
+
+      }
+
+
+      /*
+         Convert uploaded lesson start
+         to seconds.
+      */
+
+      const lessonStartSeconds =
+        lessonStartMinutes * 60;
+
+
+      /*
+         Alert exactly 2 minutes before
+         the uploaded lesson start.
+
+         NO hard-coded timetable time.
+
+         The only fixed value here is
+         the alert lead time: 2 minutes.
+      */
+
+      const alertStartSeconds =
+        lessonStartSeconds -
+        (2 * 60);
+
+
+      /*
+         Create unique alert ID.
+      */
+
+      const alertId =
+        today +
+        "|" +
+        lesson.period +
+        "|" +
+        lesson.start +
+        "|" +
+        lesson.end +
+        "|" +
+        lesson.lesson;
+
+
+      /*
+         Alert window:
+
+         alertStartSeconds <= current time
+         AND
+         current time < lesson start
+
+         Example:
+
+         Lesson:
+         11:20:00
+
+         Alert:
+
+         11:18:00
+         through
+         11:19:59
+      */
+
+      if (
+        currentSeconds >=
+          alertStartSeconds &&
+
+        currentSeconds <
+          lessonStartSeconds
+      ) {
+
+        console.log(
+          "🚨 ALERT WINDOW ACTIVE:",
+          {
+            day:
+              today,
+
+            lesson:
+              lesson.lesson,
+
+            period:
+              lesson.period,
+
+            start:
+              lesson.start,
+
+            end:
+              lesson.end,
+
+            currentTime:
+              formatTime(now),
+
+            alertFor:
+              lesson.start
+          }
+        );
+
+
+        if (
+          !announcedAlerts.has(
+            alertId
+          )
+        ) {
+
+          announcedAlerts.add(
+            alertId
+          );
+
+
+          console.log(
+            "🔊 ANNOUNCING:",
+            lesson.lesson
+          );
+
+
+          announceLesson(
+            lesson
+          );
+
+        }
+
+      }
+
+    }
+  );
+
+
+  updateNextLesson();
+
+}
+  
+
+
+/* ============================================================
+   ANNOUNCE LESSON
+   ============================================================ */
+
+function announceLesson(
+  lesson
+) {
+
+  const message =
+    "Teacher " +
+    teacherFullName +
+    ", in 2 minutes go to " +
+    lesson.lesson;
+
+
+  console.log(
+    "🔔 SPEAK:",
+    message
+  );
+
+
+  speakText(
+    message
+  );
+
+
+  showBrowserNotification(
+    "Upcoming Lesson",
+    message
+  );
+
+
+  addAlertHistory(
+    lesson
+  );
+
+
+  document.getElementById(
+    "status"
+  ).textContent =
+    "🔔 " +
+    message;
+
+}
+
+
+/* ============================================================
+   SPEAK
+   ============================================================ */
+
+function speakText(
+  text
+) {
+
+  if (
+    !("speechSynthesis" in window)
+  ) {
+
+    alert(
+      "Sorry, your browser does not support speech synthesis."
+    );
+
+    return;
+
+  }
+
+
+  speechSynthesis.cancel();
+
+
+  const message =
+    new SpeechSynthesisUtterance(
+      text
+    );
+
+
+  message.lang =
+    "en-US";
+
+
+  message.rate =
+    0.95;
+
+
+  message.pitch =
+    1;
+
+
+  speechSynthesis.speak(
+    message
+  );
+
+}
+
+
+
+/* ============================================================
+   BROWSER NOTIFICATION
+   ============================================================ */
+
+function showBrowserNotification(
+  title,
+  message
+) {
+
+  if (
+    !("Notification" in window)
+  ) {
+
+    return;
+
+  }
+
+
+  if (
+    Notification.permission ===
+    "granted"
+  ) {
+
+    new Notification(
+      title,
+      {
+        body:
+          message
+      }
+    );
+
+
+    return;
+
+  }
+
+
+  if (
+    Notification.permission !==
+    "denied"
+  ) {
+
+    Notification.requestPermission()
+      .then(
+        permission => {
+
+          if (
+            permission ===
+            "granted"
+          ) {
+
+            new Notification(
+              title,
+              {
+                body:
+                  message
+              }
+            );
+
+          }
+
+        }
+      );
+
+  }
+
+}
+
+
+/* ============================================================
+   ALERT HISTORY
+   ============================================================ */
+
+function addAlertHistory(
+  lesson
+) {
+
+  const now =
+    new Date();
+
+
+  alertHistory.unshift({
+
+    time:
+      formatTime(now),
+
+    day:
+      capitalize(
+        getToday()
+      ),
+
+    period:
+      capitalize(
+        lesson.period
+      ),
+
+    lesson:
+      lesson.lesson,
+
+    start:
+      lesson.start,
+
+    end:
+      lesson.end
+
+  });
+
+
+  alertHistory =
+    alertHistory.slice(
+      0,
+      20
+    );
+
+
+  renderAlertHistory();
+
+}
+
+
+/* ============================================================
+   RENDER ALERT HISTORY
+   ============================================================ */
+
+function renderAlertHistory() {
+
+  const container =
+    document.getElementById(
+      "alertLog"
+    );
+
+
+  if (
+    alertHistory.length === 0
+  ) {
+
+    container.innerHTML =
+      "<div class='small'>" +
+      "No alerts yet." +
+      "</div>";
+
+    return;
+
+  }
+
+
+  container.innerHTML =
+    alertHistory
+      .map(
+        item => {
+
+          return (
+
+            "<div class='alert-item'>" +
+
+            "<div class='alert-time'>" +
+            "🔔 " +
+            escapeHTML(
+              item.time
+            ) +
+            "</div>" +
+
+            "<div>" +
+            escapeHTML(
+              item.day
+            ) +
+            " • " +
+            escapeHTML(
+              item.period
+            ) +
+            " • " +
+            escapeHTML(
+              item.start
+            ) +
+            " – " +
+            escapeHTML(
+              item.end
+            ) +
+            "</div>" +
+
+            "<div>" +
+            escapeHTML(
+              item.lesson
+            ) +
+            "</div>" +
+
+            "</div>"
+
+          );
+
+        }
+      )
+      .join("");
+
+}
+
+
+/* ============================================================
+   NEXT LESSON
+   ============================================================ */
+
+function updateNextLesson() {
+
+  const container =
+    document.getElementById(
+      "nextLesson"
+    );
+
+
+  if (
+    teacherSchedule.length === 0
+  ) {
+
+    container.innerHTML =
+
+      "<div class='lesson-name'>" +
+      "No timetable loaded" +
+      "</div>" +
+
+      "<div class='lesson-meta'>" +
+      "Load a timetable to see your next lesson." +
+      "</div>";
+
+
+    return;
+
+  }
+
+
+  const now =
+    new Date();
+
+
+  const today =
+    getToday();
+
+
+  const currentMinutes =
+    now.getHours() * 60 +
+    now.getMinutes();
+
+
+  const todayLessons =
+    teacherSchedule
+      .filter(
+        lesson =>
+          lesson.day === today
+      )
+      .sort(
+        (
+          a,
+          b
+        ) =>
+          timeToMinutes(
+            a.start
+          ) -
+          timeToMinutes(
+            b.start
+          )
+      );
+
+
+  /*
+     Find the next lesson based
+     on the uploaded timetable time.
+  */
+
+  let next =
+    todayLessons.find(
+      lesson =>
+        timeToMinutes(
+          lesson.start
+        ) > currentMinutes
+    );
+
+
+  /*
+     If today's lessons are finished,
+     find the next day.
+  */
+
+  if (!next) {
+
+    next =
+      findNextDayLesson(
+        today
+      );
+
+  }
+
+
+  if (!next) {
+
+    container.innerHTML =
+
+      "<div class='lesson-name'>" +
+      "No upcoming lesson" +
+      "</div>" +
+
+      "<div class='lesson-meta'>" +
+      "There are no more lessons in the loaded timetable." +
+      "</div>";
+
+
+    return;
+
+  }
+
+
+  const lessonStart =
+    timeToMinutes(
+      next.start
+    );
+
+
+  let countdownText =
+    "";
+
+
+  if (
+    next.day === today &&
+    lessonStart !== null
+  ) {
+
+    const difference =
+      lessonStart -
+      currentMinutes;
+
+
+    if (
+      difference > 0
+    ) {
+
+      const hours =
+        Math.floor(
+          difference / 60
+        );
+
+
+      const minutes =
+        difference % 60;
+
+
+      if (
+        hours > 0
+      ) {
+
+        countdownText =
+          hours +
+          "h " +
+          minutes +
+          "m until lesson";
+
+      } else {
+
+        countdownText =
+          minutes +
+          " minutes until lesson";
+
+      }
+
+    }
+
+  }
+
+
+  container.innerHTML =
+
+    "<div class='lesson-name'>" +
+
+    escapeHTML(
+      next.lesson
+    ) +
+
+    "</div>" +
+
+    "<div class='lesson-meta'>" +
+
+    capitalize(
+      next.day
+    ) +
+
+    " • " +
+
+    capitalize(
+      next.period
+    ) +
+
+    " • " +
+
+    next.start +
+
+    " – " +
+
+    next.end +
+
+    "</div>" +
+
+    (
+      countdownText
+        ?
+        "<div class='next-countdown'>" +
+        countdownText +
+        "</div>"
+        :
+        ""
+    );
+
+}
+
+
+/* ============================================================
+   FIND NEXT DAY LESSON
+   ============================================================ */
+
+function findNextDayLesson(
+  today
+) {
+
+  const days = [
+
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday"
+
+  ];
+
+
+  const todayIndex =
+    days.indexOf(
+      today
+    );
+
+
+  if (
+    todayIndex === -1
+  ) {
+
+    return null;
+
+  }
+
+
+  for (
+    let offset = 1;
+    offset < days.length;
+    offset++
+  ) {
+
+    const index =
+      (
+        todayIndex +
+        offset
+      ) % days.length;
+
+
+    const day =
+      days[index];
+
+
+    const lessons =
+      teacherSchedule
+        .filter(
+          lesson =>
+            lesson.day === day
+        )
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            timeToMinutes(
+              a.start
+            ) -
+            timeToMinutes(
+              b.start
+            )
+        );
+
+
+    if (
+      lessons.length > 0
+    ) {
+
+      return lessons[0];
+
+    }
+
+  }
+
+
+  return null;
+
+}
+
+
+/* ============================================================
+   INITIALIZE CLOCK
+   ============================================================ */
+
+startClock();
+
+
+/* ============================================================
+   SAVE TEACHER NAME
+   ============================================================ */
+
+const teacherInput =
+  document.getElementById(
+    "teacherName"
+  );
+
+
+const savedTeacher =
+  localStorage.getItem(
+    "smartTimetableTeacherName"
+  );
+
+
+if (savedTeacher) {
+
+  teacherInput.value =
+    savedTeacher;
+
+}
+
+
+teacherInput.addEventListener(
+  "change",
+  function() {
+
+    localStorage.setItem(
+      "smartTimetableTeacherName",
+      teacherInput.value.trim()
+    );
+
+  }
+);
+
+
+/* ============================================================
+   RESTORE LAST SAVED TIMETABLE
+   ============================================================ */
+
+loadSavedTimetableFromLocalStorage();
+
+
+/* ============================================================
+   REQUEST NOTIFICATION PERMISSION
+   ============================================================ */
+
+document.addEventListener(
+  "click",
+  function() {
+
+    if (
+      "Notification" in window &&
+      Notification.permission ===
+      "default"
+    ) {
+
+      Notification.requestPermission();
+
+    }
+
+  },
+  {
+    once: true
+  }
+);
+</script>
+
+</body>
+
+</html>
