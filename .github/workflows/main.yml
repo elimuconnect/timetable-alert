@@ -78,6 +78,8 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
 
       - name: Install Linux dependencies
         if: matrix.needs_linux_deps
