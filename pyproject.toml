@@ -9,23 +9,23 @@ authors = [
     { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }
 ]
 dependencies = [
-    "flet==0.86.5",
+    "flet>=0.86.5",
     "flet-permission-handler",
-    "pyjnius==1.7.0",
+    "pyjnius",
     "plyer",
     "android-notify",
-    "flet-webview-all", 
+  "flet-webview-all", 
 ]
 
 [dependency-groups]
 dev = [
-    "flet-cli==0.86.5",
-    "flet-desktop==0.86.5",
-    "flet-web==0.86.5",
+    "flet-cli>=0.86.5",
+    "flet-desktop>=0.86.5",
+    "flet-web>=0.86.5",
 ]
 
 [tool.flet]
-org = "org.digielimu"
+org = "Digi Elimu.org"
 product = "ClassAlert"
 company = "Smart Elimu Connect"
 copyright = "Copyright (C) 2026 by Digi Elimu"
@@ -57,4 +57,3 @@ message = "Preparing the app ….."
 [tool.flet.app.startup_screen]
 show = true
 message = "LOADING…"
-
