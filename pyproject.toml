@@ -52,4 +52,3 @@ message = "Preparing the app ….."
 [tool.flet.app.startup_screen]      # or [tool.flet.<PLATFORM>.app.startup_screen]
 show = true
 message = "LOADING…"
-
