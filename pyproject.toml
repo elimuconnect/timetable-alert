@@ -8,7 +8,7 @@ authors = [
     { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }
 ]
 dependencies = [
-    "flet>==0.83.1",
+    "flet==0.83.1",
     "flet-permission-handler",
     "pyjnius==1.7.0",
     "plyer",
@@ -16,12 +16,14 @@ dependencies = [
     "flet-webview-all"
 ]
 
+
 [dependency-groups]
 dev = [
-    "flet-cli>==0.83.1",
-    "flet-desktop>==0.83.1",
-    "flet-web>==0.83.1",
+    "flet-cli==0.83.1",
+    "flet-desktop==0.83.1",
+    "flet-web==0.83.1",
 ]
+
 
 [tool.flet]
 org = "zaim_tech.org"
