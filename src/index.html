@@ -344,6 +344,10 @@
     Ready. Enter teacher name and load a timetable.
   </div>
 
+  <div id="schoolStatus" class="timing-source" style="margin-top:10px;">
+    🏫 School authorization: Not checked
+  </div>
+
 
   <!-- ======================================================
        MONITOR
@@ -482,6 +486,25 @@ let clockInterval = null;
 let announcedAlerts = new Set();
 
 let alertHistory = [];
+
+/* ============================================================
+   SCHOOL AUTHORIZATION — SUPABASE
+   ============================================================ */
+
+const SUPABASE_URL =
+  "https://zcmzuetusvpmvubbjlmx.supabase.co";
+
+const SUPABASE_PUBLISHABLE_KEY =
+  "sb_publishable_-BGJLAySaH7bQ5lBIZF9zg_eohK-xEn";
+
+let schoolAuthorization = {
+  authorized: false,
+  schoolName: "",
+  schoolId: ""
+};
+
+const SCHOOL_AUTH_STORAGE_KEY =
+  "smartTimetableSchoolAuthorization";
 
 window.FletBridge = window.FletBridge || {
   postMessage: function(message) {
@@ -1152,18 +1175,298 @@ function startClock() {
 
 
 /* ============================================================
-   LOAD TIMETABLE - FULLY OFFLINE DOCX READER
+   SCHOOL NAME + SUPABASE AUTHORIZATION
+   ============================================================ */
+
+function normalizeSchoolNameExact(text) {
+  return String(text || "")
+    .normalize("NFKC")
+    .replace(/[\u00A0\u2000-\u200B\u202F\uFEFF]/g, " ")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function setSchoolStatus(message, isSuccess = false) {
+  const element = document.getElementById("schoolStatus");
+  if (!element) return;
+  element.textContent = message;
+  element.style.background = isSuccess ? "#e8f7ee" : "#fff7e6";
+  element.style.color = isSuccess ? "#146c43" : "#7a4b00";
+}
+
+function extractWordTextLines(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) return [];
+
+  return Array.from(doc.getElementsByTagNameNS("*", "p"))
+    .map(paragraph => getWordNodeText(paragraph))
+    .map(text => normalizeSchoolNameExact(text))
+    .filter(Boolean);
+}
+
+async function extractSchoolCandidatesFromDOCX(zip) {
+  const candidates = [];
+
+  const headerNames = Array.from(zip.entries.keys())
+    .filter(name => /^word\/header[^/]*\.xml$/i.test(name))
+    .sort();
+
+  for (const name of headerNames) {
+    try {
+      const bytes = await zip.readEntry(name);
+      const text = new TextDecoder("utf-8").decode(bytes);
+      candidates.push(...extractWordTextLines(text));
+    } catch (error) {
+      console.warn("Could not read DOCX header:", name, error);
+    }
+  }
+
+  try {
+    const bytes = await zip.readEntry("word/document.xml");
+    const text = new TextDecoder("utf-8").decode(bytes);
+    candidates.push(...extractWordTextLines(text));
+  } catch (error) {
+    console.warn("Could not read main DOCX text for school name:", error);
+  }
+
+  return Array.from(new Set(candidates.map(normalizeSchoolNameExact)));
+}
+
+function getSavedSchoolAuthorization() {
+
+  try {
+
+    const saved = localStorage.getItem(
+      SCHOOL_AUTH_STORAGE_KEY
+    );
+
+    if (!saved) return null;
+
+    const authorization = JSON.parse(saved);
+
+    if (
+      !authorization ||
+      authorization.authorized !== true ||
+      !authorization.schoolName
+    ) {
+      return null;
+    }
+
+    return authorization;
+
+  } catch (error) {
+
+    console.warn(
+      "Could not read saved school authorization:",
+      error
+    );
+
+    return null;
+
+  }
+}
+
+function saveSchoolAuthorization(authorization) {
+
+  try {
+
+    localStorage.setItem(
+      SCHOOL_AUTH_STORAGE_KEY,
+      JSON.stringify(authorization)
+    );
+
+    console.log(
+      "💾 School authorization saved locally. Future uploads will work offline.",
+      authorization
+    );
+
+  } catch (error) {
+
+    console.warn(
+      "Could not save school authorization locally:",
+      error
+    );
+
+  }
+}
+
+async function verifySchoolAgainstSupabase(zip) {
+
+  /* ------------------------------------------------------------
+     AFTER THE FIRST SUCCESSFUL CHECK, DO NOT CONTACT SUPABASE
+     AGAIN. The verified school authorization is stored locally.
+     ------------------------------------------------------------ */
+
+  const savedAuthorization = getSavedSchoolAuthorization();
+
+  if (savedAuthorization) {
+
+    schoolAuthorization = savedAuthorization;
+
+    setSchoolStatus(
+      "✅ School already verified: " +
+      schoolAuthorization.schoolName +
+      " — working offline",
+      true
+    );
+
+    console.log(
+      "🔒 Using previously saved school authorization. No Supabase request made."
+    );
+
+    return schoolAuthorization;
+
+  }
+
+  /* ------------------------------------------------------------
+     FIRST-TIME AUTHORIZATION ONLY — INTERNET REQUIRED
+     ------------------------------------------------------------ */
+
+  setSchoolStatus(
+    "🌐 First-time school authorization: Checking Supabase..."
+  );
+const response = await fetch(
+  SUPABASE_URL + "/rest/v1/timetable_schools?select=id,name",
+    {
+      method: "GET",
+      headers: {
+        "apikey": SUPABASE_PUBLISHABLE_KEY,
+        "Authorization": "Bearer " + SUPABASE_PUBLISHABLE_KEY,
+        "Accept": "application/json"
+      },
+      cache: "no-store"
+    }
+  );
+
+  if (!response.ok) {
+    let detail = "";
+    try { detail = await response.text(); } catch (_) {}
+    throw new Error(
+      "Supabase school lookup failed (" +
+      response.status + "). " +
+      (detail || response.statusText)
+    );
+  }
+
+  const schools = await response.json();
+  if (!Array.isArray(schools)) {
+    throw new Error("Supabase returned an invalid schools response.");
+  }
+
+  const candidates = await extractSchoolCandidatesFromDOCX(zip);
+  console.log("🏫 DOCX school-name candidates:", candidates);
+
+
+const validSchools = schools.filter(
+  school =>
+    school &&
+    typeof school.name === "string" &&
+    school.name.trim()
+);
+
+let matchedSchool = null;
+
+for (const candidate of candidates) {
+
+  const normalizedCandidate =
+    normalizeSchoolNameExact(candidate);
+
+  console.log(
+    "🔎 Checking DOCX school candidate:",
+    candidate,
+    "→",
+    normalizedCandidate
+  );
+
+  for (const school of validSchools) {
+
+    const normalizedSupabaseName =
+      normalizeSchoolNameExact(school.name);
+
+    console.log(
+      "🏫 Comparing with Supabase:",
+      school.name,
+      "→",
+      normalizedSupabaseName
+    );
+
+    if (
+      normalizedCandidate ===
+      normalizedSupabaseName
+    ) {
+
+      matchedSchool = school;
+
+      console.log(
+        "✅ SCHOOL MATCH FOUND:",
+        {
+          docx: candidate,
+          supabase: school.name,
+          schoolId: school.id
+        }
+      );
+
+      break;
+    }
+  }
+
+  if (matchedSchool) {
+    break;
+  }
+}
+
+
+  
+  if (!matchedSchool) {
+    schoolAuthorization = {
+      authorized: false,
+      schoolName: "",
+      schoolId: ""
+    };
+
+   setSchoolStatus(
+  "❌ School not authorized. No matching school was found in Supabase."
+);
+
+   
+      throw new Error(
+  "School verification failed. No matching school was found in Supabase."
+);
+  
+  }
+
+  schoolAuthorization = {
+    authorized: true,
+    schoolName: matchedSchool.name,
+    schoolId: matchedSchool.id || ""
+  };
+
+  /* Save only after a successful exact match. */
+  saveSchoolAuthorization(schoolAuthorization);
+
+  setSchoolStatus(
+    "✅ School verified: " +
+    matchedSchool.name +
+    " — authorization saved for offline use",
+    true
+  );
+
+  console.log("✅ EXACT SCHOOL MATCH:", matchedSchool);
+  return matchedSchool;
+}
+
+
+/* ============================================================
+   LOAD TIMETABLE - OFFLINE DOCX READER + ONE-TIME SCHOOL CHECK
    ============================================================
 
-   The app no longer uses online DOCX converter or any internet/CDN service.
-
-   A .docx file is a ZIP package containing WordprocessingML XML.
-   The small ZIP reader below opens that package locally in the
-   browser, reads word/document.xml, extracts the teacher table,
-   and passes the same extractedRows structure to the existing
-   schedule/alert code.
-
-   No timetable times are hardcoded here.
+   The timetable itself is always read locally from the DOCX.
+   The school name is checked against Supabase only the first
+   time. After a successful exact match, authorization is stored
+   locally and future timetable loads require no internet.
    ============================================================ */
 
 async function loadTimetable() {
@@ -1228,8 +1531,20 @@ async function loadTimetable() {
     const arrayBuffer =
       await file.arrayBuffer();
 
+    const zip =
+      await readZipEntries(
+        arrayBuffer
+      );
+
+    /* First upload checks Supabase. Later uploads use the locally
+       saved authorization and do not contact the internet. */
+    await verifySchoolAgainstSupabase(
+      zip
+    );
+
     await processTimetableDOCX(
-      arrayBuffer
+      arrayBuffer,
+      zip
     );
 
   } catch (error) {
@@ -1887,13 +2202,21 @@ function escapeHTML(
    ============================================================ */
 
 async function processTimetableDOCX(
-  arrayBuffer
+  arrayBuffer,
+  existingZip = null
 ) {
 
   const zip =
+    existingZip ||
     await readZipEntries(
       arrayBuffer
     );
+
+  if (!schoolAuthorization.authorized) {
+    throw new Error(
+      "Timetable processing blocked: school has not been authorized."
+    );
+  }
 
   const documentBytes =
     await zip.readEntry(
@@ -2179,33 +2502,24 @@ async function processTimetableDOCX(
    ============================================================ */
 
 if (teacherSchedule.length > 0) {
-
   saveTimetableToLocalStorage();
+}
+
+if (teacherSchedule.length === 0) {
+
+  document.getElementById("status").textContent =
+    "⚠️ Timetable loaded, but no teaching lessons were found for " +
+    teacherFullName;
+
+} else {
+
+  document.getElementById("status").textContent =
+    "✅ Timetable loaded for " +
+    teacherFullName +
+    " — " +
+    schoolAuthorization.schoolName;
 
 }
-  
-
-
-  if (
-    teacherSchedule.length === 0
-  ) {
-
-    document.getElementById(
-      "status"
-    ).textContent =
-      "⚠️ Timetable loaded, but no teaching lessons were found for " +
-      teacherFullName;
-
-  } else {
-
-    document.getElementById(
-      "status"
-    ).textContent =
-      "✅ Timetable loaded for " +
-      teacherFullName;
-
-  }
-
 
   document.getElementById(
     "startBtn"
@@ -2247,6 +2561,9 @@ function saveTimetableToLocalStorage() {
 
       teacherFullName:
         teacherFullName,
+
+      schoolAuthorization:
+        schoolAuthorization,
 
       extractedRows:
         extractedRows,
@@ -2331,6 +2648,45 @@ function loadSavedTimetableFromLocalStorage() {
 
     }
 
+
+    /* ----------------------------------------
+       Restore school authorization
+       ---------------------------------------- */
+
+    /*
+       Older versions of the tool saved the timetable before the
+       schoolAuthorization property was added. If this device has
+       already completed the one-time Supabase school verification,
+       use that locally saved authorization to restore the timetable.
+       No Supabase request is made here.
+    */
+    const savedLocalAuthorization =
+      getSavedSchoolAuthorization();
+
+    if (
+      timetableData.schoolAuthorization &&
+      timetableData.schoolAuthorization.authorized === true &&
+      timetableData.schoolAuthorization.schoolName
+    ) {
+      schoolAuthorization = timetableData.schoolAuthorization;
+      saveSchoolAuthorization(schoolAuthorization);
+    } else if (savedLocalAuthorization) {
+      schoolAuthorization = savedLocalAuthorization;
+      console.log(
+        "🔒 Restoring older saved timetable using the device's previously verified school authorization. Offline mode."
+      );
+    } else {
+      console.warn(
+        "⚠️ Saved timetable has no valid school authorization, and this device has not completed school verification. It will not be restored."
+      );
+      return false;
+    }
+
+    setSchoolStatus(
+      "✅ Previously verified school: " +
+      schoolAuthorization.schoolName,
+      true
+    );
 
     /* ----------------------------------------
        Restore teacher name
@@ -2922,16 +3278,199 @@ function buildTeacherSchedule() {
    CLEAN LESSON
    ============================================================ */
 
-function cleanLessonText(
-  text
-) {
 
-  return text
-    .replace(/\n+/g, ", ")
-    .replace(/\s+/g, " ")
-    .trim();
 
+function cleanLessonText(text) {
+
+  if (!text) {
+    return "";
+  }
+
+  const original =
+    String(text)
+      .replace(/\n+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (!original) {
+    return "";
+  }
+
+  const subjectMap = {
+
+    "INTSCI": "Integrated Science",
+    "PRETECH": "Pre-Technical Studies",
+    "PRETECHNICAL": "Pre-Technical Studies",
+
+    "SCITECH": "Science and Technology",
+
+    "MATH": "Mathematics",
+    "MAT": "Mathematics",
+
+    "ENG": "English",
+
+    "KISW": "Kiswahili",
+    "KIS": "Kiswahili",
+
+    "CRE": "Christian Religious Education",
+    "IRE": "Islamic Religious Education",
+    "HRE": "Hindu Religious Education",
+
+    "SST": "Social Studies",
+    "SS": "Social Studies",
+
+    "AGR": "Agriculture",
+    "AGRI": "Agriculture",
+
+    "CAS": "Creative Arts and Sports",
+    "CA&S": "Creative Arts and Sports",
+
+    "PTS": "Pre-Technical Studies",
+
+    "ICT": "Information and Communication Technology",
+
+    "COMP": "Computer Studies",
+    "COMPUTER": "Computer Studies",
+
+    "KSL": "Kenyan Sign Language",
+
+    "ARA": "Arabic",
+    "FRE": "French",
+    "GER": "German",
+    "MAN": "Mandarin",
+
+    "MUS": "Music",
+    "MUSIC": "Music",
+
+    "ART": "Creative Arts",
+
+    "PE": "Physical Education",
+    "HE": "Health Education",
+
+    "HSC": "Home Science",
+
+    "BUS": "Business Studies",
+
+    "LIT": "Literature in English"
+  };
+
+
+  const upper =
+    original.toUpperCase();
+
+
+  /*
+     IMPORTANT:
+     Check the LONGEST codes first.
+     Therefore INTSCI is checked before SCI,
+     PRETECH before TECH, etc.
+  */
+
+  const codes =
+    Object.keys(subjectMap)
+      .sort(
+        (a, b) =>
+          b.length - a.length
+      );
+
+
+  for (const code of codes) {
+
+    /*
+       Match ONLY at the beginning.
+
+       Examples:
+
+       BUS10E
+       BUS 10E
+       BUS-10E
+       BUS/10E
+    */
+
+    const pattern =
+      new RegExp(
+        "^" +
+        code.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        ) +
+        "(?=$|[0-9A-Z\\s\\-_/()])",
+        "i"
+      );
+
+
+    if (!pattern.test(upper)) {
+      continue;
+    }
+
+
+    /*
+       Get EVERYTHING after the code.
+    */
+
+    const remainder =
+      original
+        .substring(code.length)
+        .trim();
+
+
+    /*
+       BUS
+       → Business Studies
+    */
+
+    if (!remainder) {
+      return subjectMap[code];
+    }
+
+
+    /*
+       BUS10E
+       → Business Studies 10E
+
+       BUS 10E
+       → Business Studies 10E
+
+       BUS-10E
+       → Business Studies 10E
+    */
+
+    const cleanedRemainder =
+      remainder
+        .replace(
+          /^[-_/]+/,
+          ""
+        )
+        .trim();
+
+
+    return (
+      subjectMap[code] +
+      (
+        cleanedRemainder
+          ? " " + cleanedRemainder
+          : ""
+      )
+    );
+  }
+
+
+  /*
+     If the cell already contains a full
+     subject name, DO NOT modify it.
+
+     Example:
+
+     Business Studies 10E
+
+     stays:
+
+     Business Studies 10E
+  */
+
+  return original;
 }
+  
 
 
 /* ============================================================
@@ -3193,6 +3732,13 @@ function escapeHTML(
 
 function startMonitoring() {
 
+  if (!schoolAuthorization.authorized) {
+    alert(
+      "Monitoring blocked. The timetable school has not been verified against Supabase."
+    );
+    return;
+  }
+
   if (
     teacherSchedule.length === 0
   ) {
@@ -3262,7 +3808,9 @@ function startMonitoring() {
     "status"
   ).textContent =
     "🟢 Monitoring started for " +
-    teacherFullName;
+    teacherFullName +
+    " — " +
+    schoolAuthorization.schoolName;
 
 }
 
@@ -3583,9 +4131,14 @@ function checkTimetable() {
    ANNOUNCE LESSON
    ============================================================ */
 
-function announceLesson(
-  lesson
-) {
+function announceLesson(lesson) {
+
+  /*
+     lesson.lesson is already cleaned when
+     the timetable is loaded.
+
+     Do NOT run cleanLessonText() again here.
+  */
 
   const message =
     "Teacher " +
@@ -3623,7 +4176,6 @@ function announceLesson(
     message;
 
 }
-
 
 /* ============================================================
    SPEAK
