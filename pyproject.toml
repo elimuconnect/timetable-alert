@@ -4,17 +4,17 @@ name = "Class-Alert"
 version = "0.1.2"
 description = ""
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12.3"
 authors = [
     { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }
 ]
 dependencies = [
     "flet>=0.86.5",
     "flet-permission-handler",
-    "pyjnius",
+    "pyjnius==1.7.0",
     "plyer",
     "android-notify",
-  "flet-webview-all", 
+    "flet-webview-all", 
 ]
 
 [dependency-groups]
