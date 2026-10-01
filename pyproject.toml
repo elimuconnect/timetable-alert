@@ -44,6 +44,7 @@ jni = "1.1.0"
 "com.android.alarm.permission.SET_ALARM" = true
 "android.permission.RECEIVE_BOOT_COMPLETED" = true
 "android.permission.SYSTEM_ALERT_WINDOW" = true
+"android.permission.MANAGE_EXTERNAL_STORAGE" = true
 
 [tool.flet.splash]
 color = "#ffffff"
