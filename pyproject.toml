@@ -11,9 +11,9 @@ authors = [
 dependencies = [
     "flet>=0.86.5",
     "flet-permission-handler",
-    "pyjnius==1.7.0",
+    "pyjnius",
     "plyer",
-    "android-notify==1.61.3.dev0",
+    "android-notify",
   "flet-webview-all", 
 ]
 
