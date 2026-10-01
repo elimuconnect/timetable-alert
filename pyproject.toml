@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.flet]
-org = "Digi Elimu.org"
+org = "org.digielimu"
 product = "ClassAlert"
 company = "Smart Elimu Connect"
 copyright = "Copyright (C) 2026 by Digi Elimu"
