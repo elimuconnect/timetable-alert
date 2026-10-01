@@ -5,55 +5,98 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  UV_PYTHON: 3.12
+  PYTHONUTF8: 1
+
+  # https://flet.dev/docs/reference/environment-variables
+  FLET_CLI_NO_RICH_OUTPUT: 1
+
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: apk
+          # -------- Desktop --------
+          - name: linux
             runner: ubuntu-latest
+            build_cmd: "flet build linux"
+            artifact_path: build/linux
+            needs_linux_deps: true
 
-          - target: aab
-            runner: ubuntu-latest
+          - name: macos
+            runner: macos-26
+            build_cmd: "flet build macos"
+            artifact_path: build/macos
+            needs_linux_deps: false
 
-          - target: web
-            runner: ubuntu-latest
-
-          - target: linux
-            runner: ubuntu-latest
-
-          - target: windows
+          - name: windows
             runner: windows-latest
+            build_cmd: "flet build windows"
+            artifact_path: build/windows
+            needs_linux_deps: false
 
-          - target: macos
-            runner: macos-latest
+          # -------- Android --------
+          - name: aab
+            runner: ubuntu-latest
+            build_cmd: "flet build aab"
+            artifact_path: build/aab
+            needs_linux_deps: false
 
-          - target: ipa
-            runner: macos-latest
+          - name: apk
+            runner: ubuntu-latest
+            build_cmd: "flet build apk"
+            artifact_path: build/apk
+            needs_linux_deps: false
 
-          - target: ios-simulator
-            runner: macos-latest
+          # -------- iOS --------
+          - name: ipa
+            runner: macos-26
+            build_cmd: "flet build ipa"
+            artifact_path: build/ipa
+            needs_linux_deps: false
+
+          - name: ios-simulator
+            runner: macos-26
+            build_cmd: "flet build ios-simulator"
+            artifact_path: build/ios-simulator
+            needs_linux_deps: false
+
+          # -------- Web --------
+          - name: web
+            runner: ubuntu-latest
+            build_cmd: "flet build web"
+            artifact_path: build/web
+            needs_linux_deps: false
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Build app
-        id: build
-        uses: flet-dev/flet-build-action@v1
-        with:
-          target: ${{ matrix.target }}
-          runner-python-version: "3.14"
-          bundled-python-version: "3.14"
-          build-number: ${{ github.run_number }}
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
 
-      - name: Upload build archive
+      - name: Install Linux dependencies
+        if: matrix.needs_linux_deps
+        shell: bash
+        run: |
+            sudo apt update --allow-releaseinfo-change
+            LINUX_DEPS="$(uv run flet --version --json | jq -r '.linux_dependencies | join(" ")')"
+            sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+            sudo apt-get clean
+
+      - name: Build app
+        shell: bash
+        run: |
+          uv run ${{ matrix.build_cmd }} --yes --verbose
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          path: ${{ steps.build.outputs.archive-path }}
-          archive: false
+          name: ${{ matrix.name }}-build-artifact
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: error
           overwrite: false
