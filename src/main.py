@@ -29,10 +29,12 @@ class smart_alert:
         with open(IILE, "r", encoding="utf-8") as file:
             self.html_read = file.read()
 
-        self.webview = fwa.FletWebviewAll(
-            html=self.html_read,
-            expand=True,
-        )
+       self.webview = fwa.FletWebviewAll(
+    html=self.html_read,
+    expand=True,
+    javascript_enabled=True,
+    debugging_enabled=True,
+)
         self.webview.javascript_channels = ["FletBridge"]
         self.webview.on_javascript_message = self.on_message
 
