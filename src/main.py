@@ -40,7 +40,7 @@ class smart_alert:
 
         # ---------- App chrome ----------
         self.page.appbar = ft.AppBar(
-            title=ft.Text(value="Smart Timetable Lesson Alert"),
+            title=ft.Text(value="Timetable Lesson Alert",),
             center_title=True,
             bgcolor=ft.Colors.BLUE,
             actions=[
@@ -52,13 +52,6 @@ class smart_alert:
                 ),
             ],
         )
-
-        self.page.floating_action_button = ft.FloatingActionButton(
-            icon=ft.Icons.LIBRARY_BOOKS_SHARP,
-            bgcolor=ft.Colors.GREEN_600,
-            foreground_color=ft.Colors.WHITE,
-        )
-        self.page.floating_action_button_location = ft.FloatingActionButtonLocation.END_FLOAT
 
         self.page.add(self.webview)
 
