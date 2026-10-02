@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  UV_PYTHON: 3.12
+  UV_PYTHON: "3.12"
+  # Python version bundled INTO the app (Flet defaults to 3.14 otherwise)
+  SERIOUS_PYTHON_VERSION: "3.12"
   PYTHONUTF8: 1
 
   # https://flet.dev/docs/reference/environment-variables
@@ -20,57 +22,60 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # -------- Desktop --------
-          - name: linux
-            runner: ubuntu-latest
-            build_cmd: "flet build linux"
-            artifact_path: build/linux
-            needs_linux_deps: true
-
-          - name: macos
-            runner: macos-26
-            build_cmd: "flet build macos"
-            artifact_path: build/macos
-            needs_linux_deps: false
-
-          - name: windows
-            runner: windows-latest
-            build_cmd: "flet build windows"
-            artifact_path: build/windows
-            needs_linux_deps: false
+          # Debugging: only APK is enabled. Uncomment others one at a time
+          # after the APK build is green.
 
           # -------- Android --------
-          - name: aab
-            runner: ubuntu-latest
-            build_cmd: "flet build aab"
-            artifact_path: build/aab
-            needs_linux_deps: false
-
           - name: apk
             runner: ubuntu-latest
             build_cmd: "flet build apk"
             artifact_path: build/apk
             needs_linux_deps: false
 
-          # -------- iOS --------
-          - name: ipa
-            runner: macos-26
-            build_cmd: "flet build ipa"
-            artifact_path: build/ipa
-            needs_linux_deps: false
+          # - name: aab
+          #   runner: ubuntu-latest
+          #   build_cmd: "flet build aab"
+          #   artifact_path: build/aab
+          #   needs_linux_deps: false
 
-          - name: ios-simulator
-            runner: macos-26
-            build_cmd: "flet build ios-simulator"
-            artifact_path: build/ios-simulator
-            needs_linux_deps: false
+          # -------- Desktop --------
+          # - name: linux
+          #   runner: ubuntu-latest
+          #   build_cmd: "flet build linux"
+          #   artifact_path: build/linux
+          #   needs_linux_deps: true
+
+          # - name: macos
+          #   runner: macos-26
+          #   build_cmd: "flet build macos"
+          #   artifact_path: build/macos
+          #   needs_linux_deps: false
+
+          # - name: windows
+          #   runner: windows-latest
+          #   build_cmd: "flet build windows"
+          #   artifact_path: build/windows
+          #   needs_linux_deps: false
+
+          # -------- iOS --------
+          # - name: ipa
+          #   runner: macos-26
+          #   build_cmd: "flet build ipa"
+          #   artifact_path: build/ipa
+          #   needs_linux_deps: false
+
+          # - name: ios-simulator
+          #   runner: macos-26
+          #   build_cmd: "flet build ios-simulator"
+          #   artifact_path: build/ios-simulator
+          #   needs_linux_deps: false
 
           # -------- Web --------
-          - name: web
-            runner: ubuntu-latest
-            build_cmd: "flet build web"
-            artifact_path: build/web
-            needs_linux_deps: false
+          # - name: web
+          #   runner: ubuntu-latest
+          #   build_cmd: "flet build web"
+          #   artifact_path: build/web
+          #   needs_linux_deps: false
 
     steps:
       - name: Checkout repository
@@ -83,10 +88,19 @@ jobs:
         if: matrix.needs_linux_deps
         shell: bash
         run: |
-            sudo apt update --allow-releaseinfo-change
-            LINUX_DEPS="$(uv run flet --version --json | jq -r '.linux_dependencies | join(" ")')"
-            sudo apt-get install -y --no-install-recommends $LINUX_DEPS
-            sudo apt-get clean
+          sudo apt update --allow-releaseinfo-change
+          LINUX_DEPS="$(uv run flet --version --json | jq -r '.linux_dependencies | join(" ")')"
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+          sudo apt-get clean
+
+      - name: Accept Android licenses
+        if: matrix.name == 'apk' || matrix.name == 'aab'
+        shell: bash
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      - name: Check Python sources compile
+        shell: bash
+        run: python3 -m compileall -q src
 
       - name: Build app
         shell: bash
