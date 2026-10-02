@@ -29,20 +29,18 @@ class smart_alert:
         with open(IILE, "r", encoding="utf-8") as file:
             self.html_read = file.read()
 
-      
-self.webview = fwa.FletWebviewAll(
-    html=self.html_read,
-    expand=True,
-    allow_webview_permissions=True,
-    background_color=ft.Colors.BLACK
-)
-
+        self.webview = fwa.FletWebviewAll(
+            html=self.html_read,
+            expand=True,
+            allow_webview_permissions=True,
+            background_color=ft.Colors.BLACK
+        )
         self.webview.javascript_channels = ["FletBridge"]
         self.webview.on_javascript_message = self.on_message
 
         # ---------- App chrome ----------
         self.page.appbar = ft.AppBar(
-            title=ft.Text(value="Timetable Lesson Alert"),
+            title=ft.Text(value="Smart Timetable Lesson Alert"),
             center_title=True,
             bgcolor=ft.Colors.BLUE,
             actions=[
@@ -55,7 +53,12 @@ self.webview = fwa.FletWebviewAll(
             ],
         )
 
-        
+        self.page.floating_action_button = ft.FloatingActionButton(
+            icon=ft.Icons.LIBRARY_BOOKS_SHARP,
+            bgcolor=ft.Colors.GREEN_600,
+            foreground_color=ft.Colors.WHITE,
+        )
+        self.page.floating_action_button_location = ft.FloatingActionButtonLocation.END_FLOAT
 
         self.page.add(self.webview)
 
