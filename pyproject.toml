@@ -5,7 +5,7 @@ description = "Class timetable alerts"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" },
+    { name = "Zaim Maalim Sheali", email = "rehanamahmoud48@gmail.com" }, 
 ]
 dependencies = [
     "flet>=0.86.5",
