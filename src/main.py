@@ -167,6 +167,7 @@ class SmartAlert:
             return None
 
         grade = self._clean(row.get("class") or row.get("grade"))
+        speech = self._clean(row.get("speech"))
         reminder = self._to_int(row.get("reminder"), self.DEFAULT_REMINDER_MINUTES)
         class_time = self._next_weekday(day, start)
         return {
@@ -176,6 +177,7 @@ class SmartAlert:
             "reminder_before": reminder,
             "subject": subject,
             "grade": grade,
+            "speech": speech,
         }
 
     # ---------------- Parsing / time helpers ----------------
@@ -241,7 +243,10 @@ class SmartAlert:
             if not line:
                 continue
             try:
-                id_, alarm, klass, rem, subject, grade = line.split("|")
+                parts = line.split("|")
+                if len(parts) == 6:      # old files without speech
+                    parts.append("")
+                id_, alarm, klass, rem, subject, grade, speech = parts
                 records.append(
                     {
                         "id": int(id_),
@@ -250,6 +255,7 @@ class SmartAlert:
                         "reminder_before": int(rem),
                         "subject": subject,
                         "grade": grade,
+                        "speech": speech,
                     }
                 )
             except ValueError:
@@ -262,7 +268,8 @@ class SmartAlert:
             for r in records:
                 f.write(
                     f"{r['id']}|{r['time'].isoformat()}|{r['class_time'].isoformat()}"
-                    f"|{r['reminder_before']}|{r['subject']}|{r['grade']}\n"
+                    f"|{r['reminder_before']}|{r['subject']}|{r['grade']}"
+                    f"|{r.get('speech', '')}\n"
                 )
 
     # ---------------- Alarms / notifications ----------------
@@ -389,24 +396,22 @@ class SmartAlert:
             self._send_notification(self._build_notification(nt_id, title, body, True), body)
 
             try:
-                sp = tts.TTS()
+                if record:
+                    spoken = record.get("speech") or (
+                        record["subject"]
+                        + (f", {record['grade']}" if record["grade"] else "")
+                        + ", starts now"
+                    )
+                else:
+                    spoken = body
 
-            try:
-    if record:
-        spoken = record["subject"]
-        if record["grade"]:
-            spoken += f", {record['grade']}"
-        spoken += ", starts now"
-    else:
-        spoken = body
-
-    self._tts = tts.TTS()                                  # keep a reference
-    if await asyncio.to_thread(self._tts.wait_ready, 5):   # actually call it
-        self._tts.speak(spoken)
-    else:
-        print(f"TTS init failed, status={self._tts._listener.status}")
-except Exception as err:
-    print(f"TTS error: {err}")
+                self._tts = tts.TTS()                                  # keep a reference
+                if await asyncio.to_thread(self._tts.wait_ready, 5):   # note the ()
+                    self._tts.speak(spoken)
+                else:
+                    print(f"TTS init failed, status={self._tts._listener.status}")
+            except Exception as err:
+                print(f"TTS error: {err}")
 
             if record:
                 ct = record["class_time"]
