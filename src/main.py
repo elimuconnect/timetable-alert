@@ -390,18 +390,23 @@ class SmartAlert:
 
             try:
                 sp = tts.TTS()
-                if record:
-                    spoken = f"{record['subject']}"
-                    if record["grade"]:
-                        spoken += f", {record['grade']}"
-                    spoken += ", starts now"
-                else:
-                    spoken = body
-                    
-                if sp.wait_ready:    
-                    sp.speak(spoken)
-            except Exception as err:
-                print(f"TTS error: {err}")
+
+            try:
+    if record:
+        spoken = record["subject"]
+        if record["grade"]:
+            spoken += f", {record['grade']}"
+        spoken += ", starts now"
+    else:
+        spoken = body
+
+    self._tts = tts.TTS()                                  # keep a reference
+    if await asyncio.to_thread(self._tts.wait_ready, 5):   # actually call it
+        self._tts.speak(spoken)
+    else:
+        print(f"TTS init failed, status={self._tts._listener.status}")
+except Exception as err:
+    print(f"TTS error: {err}")
 
             if record:
                 ct = record["class_time"]
