@@ -76,7 +76,7 @@ button{width:100%}
 </div>
 
 <div id="status">Ready. Enter teacher name, choose a timetable and load it.</div>
-<div id="schoolStatus" class="timing-source" style="margin-top:10px;">🏫 School authorization: Not checked</div>
+
 
 <div class="monitor-grid">
   <div class="monitor-box">
@@ -876,8 +876,10 @@ async function loadTimetable() {
       "lessonFile"
     );
 
-  const file =
-    fileInput.files[0];
+
+const file =
+  pickedFile || fileInput.files[0];
+  
 
   const inputName =
     document.getElementById(
@@ -1766,7 +1768,7 @@ function rejectTimetable(reason) {
 
   if (editor) {
     editor.innerHTML =
-      `<p><strong>❌ Timetable rejected.</strong></p><p>${escapeHTML(reason)}</p><p>Only official Smart Elimu Connect timetables can be loaded.</p>`;
+      `<p><strong>❌ Timetable rejected.</strong></p><p>${escapeHTML(reason)}</p><p>Only official timetables can be loaded.</p>`;
   }
 
   const scheduleContainer =
@@ -1899,42 +1901,169 @@ async function processTimetableDOCX(
         node.nodeType === 1
     );
 
+
+  /* ============================================================
+     NORMALIZE REQUESTED TEACHER
+     ============================================================ */
+
   const normalizedTeacher =
     normalizeTeacherName(
       teacherFullName
     );
 
+  console.log(
+    "👤 TEACHER REQUESTED:",
+    teacherFullName
+  );
+
+  console.log(
+    "👤 NORMALIZED TEACHER:",
+    normalizedTeacher
+  );
+
+  if (!normalizedTeacher) {
+
+    document.getElementById(
+      "status"
+    ).textContent =
+      "❌ Please enter a teacher name.";
+
+    return;
+
+  }
+
   let foundTable =
     null;
 
-  /*
-     First reproduce the old online DOCX converter
-     behavior: if a paragraph containing
-     the teacher name is followed by a
-     table, use that table.
-  */
+
+  /* ============================================================
+     FIND ALL TIMETABLE TABLES
+     ============================================================ */
+
+  const tables =
+    allWordDescendants(
+      body,
+      "tbl"
+    );
+
+  console.log(
+    "📊 TOTAL TIMETABLE TABLES FOUND:",
+    tables.length
+  );
+
+
+  /* ============================================================
+     METHOD 1:
+     SEARCH INSIDE EACH TABLE FOR THE TEACHER NAME
+     ============================================================ */
+
   for (
     let i = 0;
-    i < bodyChildren.length;
+    i < tables.length;
     i++
   ) {
 
-    const element =
-      bodyChildren[i];
+    const table =
+      tables[i];
 
-    const elementText =
+    const tableText =
       normalizeTeacherName(
         getWordNodeText(
-          element
+          table
         )
       );
 
+    console.log(
+      `🔎 CHECKING TABLE ${i + 1}:`,
+      tableText.substring(
+        0,
+        300
+      )
+    );
+
     if (
-      elementText &&
-      elementText.includes(
+      tableText.includes(
         normalizedTeacher
       )
     ) {
+
+      foundTable =
+        table;
+
+      console.log(
+        `✅ TEACHER FOUND INSIDE TABLE ${i + 1}:`,
+        teacherFullName
+      );
+
+      break;
+
+    }
+
+  }
+
+
+  /* ============================================================
+     METHOD 2:
+     SEARCH TEACHER HEADING/PARAGRAPH
+     THEN FIND THE NEXT TABLE
+     ============================================================ */
+
+  if (!foundTable) {
+
+    for (
+      let i = 0;
+      i < bodyChildren.length;
+      i++
+    ) {
+
+      const element =
+        bodyChildren[i];
+
+      if (
+        wordLocalName(
+          element
+        ) !== "p"
+      ) {
+
+        continue;
+
+      }
+
+      const originalText =
+        getWordNodeText(
+          element
+        );
+
+      const elementText =
+        normalizeTeacherName(
+          originalText
+        );
+
+      if (!elementText) {
+
+        continue;
+
+      }
+
+      if (
+        !elementText.includes(
+          normalizedTeacher
+        )
+      ) {
+
+        continue;
+
+      }
+
+      console.log(
+        "🎯 TEACHER HEADING MATCHED:",
+        originalText
+      );
+
+
+      /* ========================================================
+         FIND THE NEXT TABLE AFTER THE TEACHER NAME
+         ======================================================== */
 
       for (
         let j = i + 1;
@@ -1942,41 +2071,83 @@ async function processTimetableDOCX(
         j++
       ) {
 
-        if (
+        const nextElement =
+          bodyChildren[j];
+
+        const nextType =
           wordLocalName(
-            bodyChildren[j]
-          ) === "tbl"
+            nextElement
+          );
+
+
+        /* ------------------------------------------------------
+           TABLE FOUND
+           ------------------------------------------------------ */
+
+        if (
+          nextType === "tbl"
         ) {
 
           foundTable =
-            bodyChildren[j];
+            nextElement;
+
+          console.log(
+            "✅ TIMETABLE TABLE ASSOCIATED WITH:",
+            teacherFullName
+          );
 
           break;
 
         }
 
-        /*
-           Stop if another teacher/table
-           section begins before a table.
-        */
+
+        /* ------------------------------------------------------
+           CHECK FOR ANOTHER TEACHER HEADING
+           ------------------------------------------------------ */
+
         if (
-          wordLocalName(
-            bodyChildren[j]
-          ) === "p"
+          nextType === "p"
         ) {
+
+          const nextOriginalText =
+            getWordNodeText(
+              nextElement
+            );
 
           const nextText =
             normalizeTeacherName(
-              getWordNodeText(
-                bodyChildren[j]
-              )
+              nextOriginalText
+            );
+
+          if (!nextText) {
+
+            continue;
+
+          }
+
+
+          /*
+             If another teacher heading appears
+             before a table, stop searching this
+             section.
+          */
+
+          const looksLikeTeacherHeading =
+            /\b(?:mr|mrs|ms|tr|teacher)\b\.?/i.test(
+              nextOriginalText
             );
 
           if (
-            nextText &&
-            nextText !==
+            looksLikeTeacherHeading &&
+            !nextText.includes(
               normalizedTeacher
+            )
           ) {
+
+            console.log(
+              "🛑 Another teacher section found before timetable:",
+              nextOriginalText
+            );
 
             break;
 
@@ -1986,45 +2157,7 @@ async function processTimetableDOCX(
 
       }
 
-    }
-
-    if (foundTable) {
-      break;
-    }
-
-  }
-
-  /*
-     Fallback: find a table that itself
-     contains the teacher name.
-  */
-  if (!foundTable) {
-
-    const tables =
-      allWordDescendants(
-        body,
-        "tbl"
-      );
-
-    for (
-      const table of tables
-    ) {
-
-      const tableText =
-        normalizeTeacherName(
-          getWordNodeText(
-            table
-          )
-        );
-
-      if (
-        tableText.includes(
-          normalizedTeacher
-        )
-      ) {
-
-        foundTable =
-          table;
+      if (foundTable) {
 
         break;
 
@@ -2034,52 +2167,65 @@ async function processTimetableDOCX(
 
   }
 
-  /*
-     Final fallback: first timetable table.
-     This keeps the original application's
-     fallback behavior.
-  */
-  if (!foundTable) {
 
-    const tables =
-      allWordDescendants(
-        body,
-        "tbl"
-      );
-
-    if (
-      tables.length > 0
-    ) {
-
-      foundTable =
-        tables[0];
-
-    }
-
-  }
+  /* ============================================================
+     TEACHER NOT FOUND
+     
+     IMPORTANT:
+     NEVER FALL BACK TO THE FIRST TIMETABLE.
+     ============================================================ */
 
   if (!foundTable) {
+
+    console.warn(
+      "❌ TEACHER TIMETABLE NOT FOUND:",
+      teacherFullName
+    );
+
+    teacherSchedule = [];
+
+    extractedRows = [];
+
 
     document.getElementById(
       "status"
     ).textContent =
-      "❌ No timetable table found.";
+      "❌ No timetable found for " +
+      teacherFullName;
+
 
     document.getElementById(
       "editor"
     ).innerHTML =
-      "<p>No Word table was found in this DOCX.</p>";
+      "<p><strong>❌ No timetable found for " +
+      escapeHTML(
+        teacherFullName
+      ) +
+      ".</strong></p>" +
+      "<p>Please check the teacher name and try again.</p>";
+
+
+    document.getElementById(
+      "startBtn"
+    ).disabled =
+      true;
+
+
+    document.getElementById(
+      "loadBtn"
+    ).disabled =
+      false;
+
 
     return;
 
   }
 
-  /*
-     Convert the selected Word table into
-     the same two-dimensional extractedRows
-     structure used by the existing schedule
-     builder.
-  */
+
+  /* ============================================================
+     CONVERT SELECTED WORD TABLE
+     ============================================================ */
+
   extractedRows =
     wordTableToRows(
       foundTable
@@ -2090,6 +2236,7 @@ async function processTimetableDOCX(
     extractedRows
   );
 
+
   document.getElementById(
     "editor"
   ).innerHTML =
@@ -2097,13 +2244,17 @@ async function processTimetableDOCX(
       extractedRows
     );
 
-  /*
-     IMPORTANT:
-     The existing schedule builder remains
-     unchanged. It reads the actual period
-     header cells extracted from document.xml.
-  */
+
+  /* ============================================================
+     BUILD TEACHER SCHEDULE
+     
+     The existing schedule builder remains unchanged.
+     It reads the actual period header cells extracted
+     from document.xml.
+     ============================================================ */
+
   buildTeacherSchedule();
+
 
   /* ============================================================
      SAVE SUCCESSFULLY PROCESSED TIMETABLE
@@ -2117,17 +2268,10 @@ async function processTimetableDOCX(
 
   }
 
-/* ============================================================
-   SAVE SUCCESSFULLY PROCESSED TIMETABLE
-   ============================================================ */
 
-if (teacherSchedule.length > 0) {
-
-  saveTimetableToLocalStorage();
-
-}
-  
-
+  /* ============================================================
+     UPDATE STATUS
+     ============================================================ */
 
   if (
     teacherSchedule.length === 0
@@ -2150,6 +2294,10 @@ if (teacherSchedule.length > 0) {
   }
 
 
+  /* ============================================================
+     BUTTON STATE
+     ============================================================ */
+
   document.getElementById(
     "startBtn"
   ).disabled =
@@ -2162,18 +2310,15 @@ if (teacherSchedule.length > 0) {
     false;
 
 
-  renderSchedule();
+  /* ============================================================
+     RENDER SCHEDULE
+     ============================================================ */
 
+  renderSchedule();
 
   updateNextLesson();
 
 }
-
-
-
-
-
-
 
 
 
