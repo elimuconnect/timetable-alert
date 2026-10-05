@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smart Timetable Voice Alert</title>
 <style>
 *{box-sizing:border-box}
@@ -3019,7 +3019,16 @@ function buildTeacherSchedule() {
           `${lesson.start} – ${lesson.end}`,
 
         Lesson:
-          lesson.lesson
+          lesson.lesson,
+
+        Reminder:
+          2,
+
+        Speech:
+          buildAnnouncement(
+            lesson,
+            2
+          )
 
       })
     );
@@ -3037,6 +3046,8 @@ function buildTeacherSchedule() {
       2
     )
   );
+
+
   FletBridge.postMessage(
     JSON.stringify(
       teacherScheduleJSONRows,
@@ -3046,8 +3057,6 @@ function buildTeacherSchedule() {
   );
 
 }
-
-
 
 
 
@@ -4033,7 +4042,13 @@ function checkTimetable() {
 
 
 
-
+function buildAnnouncement(lesson, minutes) {
+  return "Teacher " +
+         teacherFullName +
+         ", in " + minutes +
+         " minutes go to " +
+         lesson.lesson;
+}
 
 function announceLesson(lesson) {
 
@@ -4044,11 +4059,7 @@ function announceLesson(lesson) {
      Do NOT run cleanLessonText() again here.
   */
 
-  const message =
-    "Teacher " +
-    teacherFullName +
-    ", in 2 minutes go to " +
-    lesson.lesson;
+  const message = buildAnnouncement(lesson, 2);
 
 
   console.log(
@@ -4226,6 +4237,10 @@ function announceLesson(lesson) {
 }
 
   
+
+
+
+
   
 /* ============================================================
    SPEAK
