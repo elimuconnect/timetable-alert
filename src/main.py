@@ -10,37 +10,12 @@ import flet as ft
 import flet_permission_handler as fph
 import flet_webview_all as fwa
 from android_notify import Notification
-
-# ---------------- Native Android Text-to-Speech ----------------
-try:
-    from jnius import autoclass, PythonJavaClass, java_method
-except ImportError:
-    autoclass = None
-    PythonJavaClass = None
-    java_method = None
+import tts
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 # Writable app storage on Android; falls back to the source folder on desktop.
 STORAGE_DIR = pathlib.Path(os.environ.get("FLET_APP_STORAGE_DATA", str(BASE_DIR)))
 ALERTS_FILE = STORAGE_DIR / "alerts.txt"
-
-
-# ============================================================
-# ANDROID TEXT-TO-SPEECH INITIALIZATION LISTENER
-# ============================================================
-if PythonJavaClass is not None:
-
-    class TTSInitListener(PythonJavaClass):
-        __javainterfaces__ = ["android/speech/tts/TextToSpeech$OnInitListener"]
-        __javacontext__ = "app"
-
-        def __init__(self, owner):
-            super().__init__()
-            self.owner = owner
-
-        @java_method("(I)V")
-        def onInit(self, status):
-            self.owner._tts_initialized(status)
 
 
 class SmartAlert:
@@ -51,13 +26,6 @@ class SmartAlert:
     def __init__(self, page: ft.Page):
         self.page = page
         self._last_alarm_signature = None
-
-        # Native Android Text-to-Speech
-        self.tts = None
-        self.tts_ready = False
-        self.tts_listener = None
-        self._pending_speech = None
-        self._initialize_native_tts()
 
         html = (BASE_DIR / "index.html").read_text(encoding="utf-8")
         self.webview = fwa.FletWebviewAll(
@@ -81,10 +49,10 @@ class SmartAlert:
             bgcolor=ft.Colors.BLUE,
             actions=[
                 ft.IconButton(
-                    icon=ft.Icons.VOLUME_UP,
-                    tooltip="Test voice",
+                    icon=ft.Icons.ALARM_ON,
+                    tooltip="Send a test notification",
                     icon_color=ft.Colors.GREEN,
-                    on_click=lambda _: asyncio.create_task(self.test_voice()),
+                    on_click=lambda _: asyncio.create_task(self.test_notification()),
                 )
             ],
         )
@@ -100,137 +68,6 @@ class SmartAlert:
 
         page.on_route_change = lambda _: asyncio.create_task(self.check_for_alarm_intent())
         page.on_resume = lambda _: asyncio.create_task(self.check_for_alarm_intent())
-
-    # ============================================================
-    # NATIVE ANDROID TEXT-TO-SPEECH
-    # ============================================================
-    def _initialize_native_tts(self):
-        if autoclass is None:
-            print("🔊 Native Android TTS unavailable: Pyjnius is not installed.")
-            return
-
-        if self.tts is not None:
-            return  # already requested
-
-        try:
-            activity_host_class = os.getenv("MAIN_ACTIVITY_HOST_CLASS_NAME")
-            if not activity_host_class:
-                print("🔊 MAIN_ACTIVITY_HOST_CLASS_NAME is not available.")
-                return
-
-            ActivityHost = autoclass(activity_host_class)
-            activity = ActivityHost.mActivity
-            if activity is None:
-                print("🔊 Android activity is not available yet.")
-                return
-
-            TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
-            self.tts_listener = TTSInitListener(self)
-            self.tts = TextToSpeech(activity, self.tts_listener)
-            print("🔊 Android Text-to-Speech initialization requested.")
-
-        except Exception as err:
-            self.tts = None
-            self.tts_ready = False
-            print("🔊 Native TTS initialization error:", err)
-
-    def _tts_initialized(self, status):
-        try:
-            TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
-
-            if status != TextToSpeech.SUCCESS:
-                self.tts_ready = False
-                print("🔊 Android TTS initialization FAILED:", status)
-                return
-
-            Locale = autoclass("java.util.Locale")
-            result = self.tts.setLanguage(Locale("en", "US"))
-
-            if result == TextToSpeech.LANG_MISSING_DATA:
-                self.tts_ready = False
-                print("🔊 Android TTS language data is missing.")
-                return
-
-            if result == TextToSpeech.LANG_NOT_SUPPORTED:
-                self.tts_ready = False
-                print("🔊 Android TTS English language is not supported.")
-                return
-
-            self.tts.setSpeechRate(0.95)
-            self.tts.setPitch(1.0)
-            self.tts_ready = True
-            print("🔊 Android Native TTS READY.")
-
-            # If an alarm fired before TTS finished starting, say it now.
-            if self._pending_speech:
-                pending, self._pending_speech = self._pending_speech, None
-                self.speak_native(pending)
-
-        except Exception as err:
-            self.tts_ready = False
-            print("🔊 TTS setup error:", err)
-
-    def speak_native(self, text):
-        if not text:
-            return False
-
-        # Lazy retry: the activity may not have existed during __init__.
-        if self.tts is None:
-            self._initialize_native_tts()
-
-        if self.tts is None:
-            print("🔊 Native TTS object is not available.")
-            return False
-
-        if not self.tts_ready:
-            print("🔊 Native TTS is not ready yet; will speak once ready.")
-            self._pending_speech = str(text)
-            return False
-
-        try:
-            TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
-            AudioManager = autoclass("android.media.AudioManager")
-            Bundle = autoclass("android.os.Bundle")
-
-            self.tts.stop()
-
-            params = Bundle()
-            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0)
-
-            result = self.tts.speak(
-                str(text),
-                TextToSpeech.QUEUE_FLUSH,
-                params,
-                "lesson_alert",
-            )
-            print("🔊 NATIVE TTS SPEAK:", text, "RESULT:", result)
-
-            if result == TextToSpeech.SUCCESS:
-                return True
-
-            print("🔊 Android TTS rejected the speech request:", result)
-            return False
-
-        except Exception as err:
-            print("🔊 Native TTS speak error:", err)
-            return False
-
-    async def test_voice(self):
-        if not self.tts_ready:
-            self._initialize_native_tts()
-            self._toast(
-                "Android voice is not ready yet. Please wait a moment and try again.",
-                ok=False,
-            )
-            print("🔊 TEST VOICE: TTS NOT READY")
-            return
-
-        text = "Teacher Brian, this is a test of the timetable lesson alert voice."
-        if self.speak_native(text):
-            self._toast("Voice test sent to Android Text-to-Speech.")
-        else:
-            self._toast("Android Text-to-Speech could not speak.", ok=False)
 
     # ---------------- WebView -> Python ----------------
     def on_message(self, e):
@@ -551,18 +388,20 @@ class SmartAlert:
 
             self._send_notification(self._build_notification(nt_id, title, body, True), body)
 
-            # ====================================================
-            # NATIVE ANDROID VOICE ALERT
-            # ====================================================
-            if record:
-                minutes = record["reminder_before"]
-                unit = "minute" if minutes == 1 else "minutes"
-                voice_text = f"Teacher, in {minutes} {unit} go to {record['subject']}"
-                if record["grade"]:
-                    voice_text += f", {record['grade']}"
-                self.speak_native(voice_text)
-            else:
-                self.speak_native(body)
+            try:
+                sp = tts.TTS()
+                if record:
+                    spoken = f"{record['subject']}"
+                    if record["grade"]:
+                        spoken += f", {record['grade']}"
+                    spoken += ", starts now"
+                else:
+                    spoken = body
+                    
+                if sp.wait_ready:    
+                    sp.speak(spoken)
+            except Exception as err:
+                print(f"TTS error: {err}")
 
             if record:
                 ct = record["class_time"]
