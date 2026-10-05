@@ -3050,11 +3050,14 @@ function buildTeacherSchedule() {
 
 
 
+
+
 function cleanLessonText(text) {
 
   if (!text) {
     return "";
   }
+
 
   const original =
     String(text)
@@ -3062,66 +3065,177 @@ function cleanLessonText(text) {
       .replace(/\s+/g, " ")
       .trim();
 
+
   if (!original) {
     return "";
   }
 
+
+  /* ============================================================
+     SUBJECT CODE → FULL SUBJECT NAME
+     ============================================================ */
+
   const subjectMap = {
 
-    "INTSCI": "Integrated Science",
-    "PRETECH": "Pre-Technical Studies",
-    "PRETECHNICAL": "Pre-Technical Studies",
+    /* ------------------------------------------------------------
+       KENYA CBC / JSS
+       ------------------------------------------------------------ */
 
-    "SCITECH": "Science and Technology",
+    "INTSCI":
+      "Integrated Science",
 
-    "MATH": "Mathematics",
-    "MAT": "Mathematics",
+    "PRETECH":
+      "Pre-Technical Studies",
 
-    "ENG": "English",
+    "PRETECHNICAL":
+      "Pre-Technical Studies",
 
-    "KISW": "Kiswahili",
-    "KIS": "Kiswahili",
+    "SCITECH":
+      "Science and Technology",
 
-    "CRE": "Christian Religious Education",
-    "IRE": "Islamic Religious Education",
-    "HRE": "Hindu Religious Education",
+    "MATH":
+      "Mathematics",
 
-    "SST": "Social Studies",
-    "SS": "Social Studies",
+    "MAT":
+      "Mathematics",
 
-    "AGR": "Agriculture",
-    "AGRI": "Agriculture",
+    "ENG":
+      "English",
 
-    "CAS": "Creative Arts and Sports",
-    "CA&S": "Creative Arts and Sports",
+    "KISW":
+      "Kiswahili",
 
-    "PTS": "Pre-Technical Studies",
+    "KIS":
+      "Kiswahili",
 
-    "ICT": "Information and Communication Technology",
+    "CRE":
+      "Christian Religious Education",
 
-    "COMP": "Computer Studies",
-    "COMPUTER": "Computer Studies",
+    "IRE":
+      "Islamic Religious Education",
 
-    "KSL": "Kenyan Sign Language",
+    "HRE":
+      "Hindu Religious Education",
 
-    "ARA": "Arabic",
-    "FRE": "French",
-    "GER": "German",
-    "MAN": "Mandarin",
+    "SST":
+      "Social Studies",
 
-    "MUS": "Music",
-    "MUSIC": "Music",
+    "SS":
+      "Social Studies",
 
-    "ART": "Creative Arts",
+    "AGR":
+      "Agriculture",
 
-    "PE": "Physical Education",
-    "HE": "Health Education",
+    "AGRI":
+      "Agriculture",
 
-    "HSC": "Home Science",
+    "CAS":
+      "Creative Arts and Sports",
 
-    "BUS": "Business Studies",
+    "CA&S":
+      "Creative Arts and Sports",
 
-    "LIT": "Literature in English"
+    "PTS":
+      "Pre-Technical Studies",
+
+    "ICT":
+      "Information and Communication Technology",
+
+    "COMP":
+      "Computer Studies",
+
+    "COMPUTER":
+      "Computer Studies",
+
+    "KSL":
+      "Kenyan Sign Language",
+
+    "LSE":
+      "Life Skills Education",
+
+    "PPI":
+      "Pastoral Programme Instruction",
+
+    "HE":
+      "Health Education",
+
+    "PE":
+      "Physical Education",
+
+    "P.E":
+      "Physical Education",
+
+    "CSL":
+      "Community Service Learning",
+
+    "PGS":
+      "Personal and Group Study",
+
+
+    /* ------------------------------------------------------------
+       SENIOR SCHOOL
+       ------------------------------------------------------------ */
+
+    "CMATH":
+      "Core Mathematics",
+
+    "EMATH":
+      "Essential Mathematics",
+
+    "BIO":
+      "Biology",
+
+    "CHEM":
+      "Chemistry",
+
+    "PHY":
+      "Physics",
+
+    "GEO":
+      "Geography",
+
+    "HIST":
+      "History and Citizenship",
+
+    "FAS":
+      "Fasihi ya Kiswahili",
+
+    "KISL":
+      "Kiswahili Lugha",
+
+    "LIT":
+      "Literature in English",
+
+    "BUS":
+      "Business Studies",
+
+    "FRE":
+      "French",
+
+    "ARA":
+      "Arabic",
+
+    "GER":
+      "German",
+
+    "MAN":
+      "Mandarin",
+
+    "MUS":
+      "Music",
+
+    "MUSIC":
+      "Music",
+
+    "ART":
+      "Creative Arts",
+
+    "HSC":
+      "Home Science",
+
+    "G/S":
+      "Group Study"
+
   };
 
 
@@ -3129,12 +3243,17 @@ function cleanLessonText(text) {
     original.toUpperCase();
 
 
-  /*
-     IMPORTANT:
-     Check the LONGEST codes first.
-     Therefore INTSCI is checked before SCI,
-     PRETECH before TECH, etc.
-  */
+  /* ============================================================
+     CHECK LONGEST CODES FIRST
+     ============================================================
+
+     This is important because:
+
+     CMATH must be checked before MATH
+     EMATH must be checked before MATH
+     INTSCI must be checked before shorter codes
+     PRETECHNICAL must be checked before PRETECH
+     ============================================================ */
 
   const codes =
     Object.keys(subjectMap)
@@ -3144,26 +3263,42 @@ function cleanLessonText(text) {
       );
 
 
+  /* ============================================================
+     FIND SUBJECT CODE AT THE BEGINNING
+     ============================================================ */
+
   for (const code of codes) {
 
+    const escapedCode =
+      code.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+
+
     /*
-       Match ONLY at the beginning.
+       The code must be at the beginning.
 
        Examples:
 
-       BUS10E
-       BUS 10E
-       BUS-10E
-       BUS/10E
+       ENG10E
+       ENG 10E
+       ENG-10E
+
+       CMATH10A
+       CMATH 10A
+
+       P.E10M
+       P.E 10M
+
+       G/S10L
+       G/S 10L
     */
 
     const pattern =
       new RegExp(
         "^" +
-        code.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&"
-        ) +
+        escapedCode +
         "(?=$|[0-9A-Z\\s\\-_/()])",
         "i"
       );
@@ -3174,36 +3309,43 @@ function cleanLessonText(text) {
     }
 
 
-    /*
-       Get EVERYTHING after the code.
-    */
+    /* ==========================================================
+       GET EVERYTHING AFTER THE SUBJECT CODE
+       ========================================================== */
 
     const remainder =
       original
-        .substring(code.length)
+        .substring(
+          code.length
+        )
         .trim();
 
 
-    /*
-       BUS
-       → Business Studies
-    */
+    /* ==========================================================
+       CODE ONLY
+       ========================================================== */
 
     if (!remainder) {
+
       return subjectMap[code];
+
     }
 
 
-    /*
-       BUS10E
-       → Business Studies 10E
+    /* ==========================================================
+       REMOVE SEPARATORS AFTER CODE
+       ==========================================================
 
-       BUS 10E
-       → Business Studies 10E
+       Examples:
 
-       BUS-10E
-       → Business Studies 10E
-    */
+       ENG-10E
+       ENG/10E
+       ENG 10E
+
+       all become:
+
+       English 10E
+       ========================================================== */
 
     const cleanedRemainder =
       remainder
@@ -3218,30 +3360,31 @@ function cleanLessonText(text) {
       subjectMap[code] +
       (
         cleanedRemainder
-          ? " " + cleanedRemainder
+          ? " " +
+            cleanedRemainder
           : ""
       )
     );
+
   }
 
 
-  /*
-     If the cell already contains a full
-     subject name, DO NOT modify it.
+  /* ============================================================
+     FULL SUBJECT NAME ALREADY PRESENT
+     ============================================================
 
      Example:
 
      Business Studies 10E
 
-     stays:
+     remains:
 
      Business Studies 10E
-  */
+     ============================================================ */
 
   return original;
-}
-  
 
+}
 
   
 /* ============================================================
@@ -3888,6 +4031,10 @@ function checkTimetable() {
 }
   
 
+
+
+
+
 function announceLesson(lesson) {
 
   /*
@@ -3910,10 +4057,146 @@ function announceLesson(lesson) {
   );
 
 
-  speakText(
-    message
-  );
+  /* ============================================================
+     AUTOMATIC SPEECH
+     ============================================================ */
 
+  if (
+    "speechSynthesis" in window &&
+    typeof SpeechSynthesisUtterance !==
+      "undefined"
+  ) {
+
+    const speakNow =
+      function() {
+
+        try {
+
+          window.speechSynthesis.cancel();
+
+          window.speechSynthesis.resume();
+
+
+          const voiceMessage =
+            new SpeechSynthesisUtterance(
+              message
+            );
+
+
+          voiceMessage.lang =
+            "en-US";
+
+          voiceMessage.rate =
+            0.95;
+
+          voiceMessage.pitch =
+            1;
+
+          voiceMessage.volume =
+            1;
+
+
+          voiceMessage.onstart =
+            function() {
+
+              console.log(
+                "🔊 AUTOMATIC VOICE STARTED:",
+                message
+              );
+
+            };
+
+
+          voiceMessage.onend =
+            function() {
+
+              console.log(
+                "🔊 AUTOMATIC VOICE FINISHED"
+              );
+
+            };
+
+
+          voiceMessage.onerror =
+            function(event) {
+
+              console.error(
+                "🔊 AUTOMATIC VOICE ERROR:",
+                event.error
+              );
+
+            };
+
+
+          window.speechSynthesis.speak(
+            voiceMessage
+          );
+
+
+          console.log(
+            "🔊 SPEECH REQUEST SENT"
+          );
+
+        } catch (error) {
+
+          console.error(
+            "🔊 SPEECH EXCEPTION:",
+            error
+          );
+
+        }
+
+      };
+
+
+    /* First attempt */
+    speakNow();
+
+
+    /*
+       Second attempt after a short delay.
+       Some Android WebViews need the speech
+       engine to be resumed after the first call.
+    */
+
+    setTimeout(
+      function() {
+
+        if (
+          window.speechSynthesis.speaking
+        ) {
+
+          console.log(
+            "🔊 Speech is already running."
+          );
+
+          return;
+
+        }
+
+        console.log(
+          "🔊 RETRYING AUTOMATIC SPEECH..."
+        );
+
+        speakNow();
+
+      },
+      500
+    );
+
+
+  } else {
+
+    console.error(
+      "🔊 Speech synthesis is not available."
+    );
+
+  }
+
+
+  /* ============================================================
+     BROWSER NOTIFICATION
+     ============================================================ */
 
   showBrowserNotification(
     "Upcoming Lesson",
@@ -3921,10 +4204,18 @@ function announceLesson(lesson) {
   );
 
 
+  /* ============================================================
+     ALERT HISTORY
+     ============================================================ */
+
   addAlertHistory(
     lesson
   );
 
+
+  /* ============================================================
+     STATUS
+     ============================================================ */
 
   document.getElementById(
     "status"
@@ -3934,6 +4225,7 @@ function announceLesson(lesson) {
 
 }
 
+  
   
 /* ============================================================
    SPEAK
