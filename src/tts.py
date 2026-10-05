@@ -47,8 +47,3 @@ class TTS:
         self._tts.stop()
         self._tts.shutdown()
 
-
-# usage
-#tts = TTS()
-#if tts.wait_ready():
-#    tts.speak("Grade 7 Mathematics starts in five minutes")
