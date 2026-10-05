@@ -11,7 +11,6 @@ dependencies = [
     "flet>=0.86.5",
     "flet-permission-handler",
     "flet-webview-all",
-    "pyjnius==1.7.0",
     "android-notify",
 ]
 
@@ -42,6 +41,11 @@ message = "Loading..."
 [tool.flet.splash]
 color = "#ffffff"
 dark_color = "#1B6911"
+
+[tool.flet.android]
+dependencies = [
+    "pyjnius==1.7.0",
+]
 
 [tool.flet.android.permission]
 "android.permission.POST_NOTIFICATIONS" = true
