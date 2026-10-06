@@ -1,23 +1,8 @@
-from jnius import autoclass, PythonJavaClass, java_method
+from jnius import autoclass
 import time
 
 Locale = autoclass("java.util.Locale")
 TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
-
-
-class InitListener(PythonJavaClass):
-    __javainterfaces__ = ["android/speech/tts/TextToSpeech$OnInitListener"]
-    __javacontext__ = "app"
-
-    def __init__(self):
-        super().__init__()
-        self.ready = False
-        self.status = None
-
-    @java_method("(I)V")
-    def onInit(self, status):
-        self.status = status
-        self.ready = (status == TextToSpeech.SUCCESS)
 
 
 def _get_context():
@@ -37,25 +22,40 @@ def _get_context():
 
 
 class TTS:
+    """Text-to-speech WITHOUT a Python callback (avoids pyjnius proxy crashes).
+
+    The engine binds asynchronously. Until it is bound, setLanguage() returns
+    an error code (-1); once bound it returns >= 0. We poll that instead of
+    waiting for an OnInitListener.
+    """
+
     def __init__(self):
         context, self.context_source = _get_context()
-        self._listener = InitListener()          # keep a reference, or it gets garbage collected
-        self._tts = TextToSpeech(context, self._listener)
+        self.status = None
+        self.ready = False
+        self._tts = TextToSpeech(context, None)
 
-    def wait_ready(self, timeout=5):
+    def wait_ready(self, timeout=6):
         t = time.time()
-        # stop waiting as soon as Android answers (success OR error)
-        while self._listener.status is None and time.time() - t < timeout:
-            time.sleep(0.1)
-        if self._listener.ready:
-            self._tts.setLanguage(Locale.US)
-        return self._listener.ready
+        while time.time() - t < timeout:
+            try:
+                self.status = self._tts.setLanguage(Locale.US)
+            except Exception:
+                self.status = None
+            if self.status is not None and self.status >= 0:
+                self.ready = True
+                return True
+            time.sleep(0.25)
+        return False
 
     def speak(self, text):
-        if self._listener.ready:
+        if self.ready:
             # QUEUE_FLUSH = 0, QUEUE_ADD = 1
             self._tts.speak(text, TextToSpeech.QUEUE_FLUSH, None, "lesson_alert")
 
     def shutdown(self):
-        self._tts.stop()
-        self._tts.shutdown()
+        try:
+            self._tts.stop()
+            self._tts.shutdown()
+        except Exception:
+            pass
