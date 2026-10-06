@@ -17,6 +17,27 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent
 STORAGE_DIR = pathlib.Path(os.environ.get("FLET_APP_STORAGE_DATA", str(BASE_DIR)))
 ALERTS_FILE = STORAGE_DIR / "alerts.txt"
 
+# ---- debug log (shown on the next launch, no console needed) ----
+import faulthandler
+
+LOG_FILE = STORAGE_DIR / "debug.log"
+
+
+def _log(msg: str):
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%H:%M:%S} {msg}\n")
+    except Exception:
+        pass
+
+
+try:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _FAULT_FILE = open(LOG_FILE, "a")
+    faulthandler.enable(_FAULT_FILE)  # writes a Python traceback if the app hard-crashes
+except Exception:
+    pass
+
 
 class SmartAlert:
     DEFAULT_REMINDER_MINUTES = 5
@@ -63,6 +84,7 @@ class SmartAlert:
             self.restore_alarms,
             self.check_for_alarm_intent,
             self.monitor_alarm_intents,
+            self.show_last_log,
         ):
             asyncio.create_task(job())
 
@@ -405,12 +427,18 @@ class SmartAlert:
                 else:
                     spoken = body
 
+                _log(f"alarm: creating TTS, text={spoken!r}")
                 self._tts = tts.TTS()                                  # keep a reference
-                if await asyncio.to_thread(self._tts.wait_ready, 5):   # note the ()
+                _log("alarm: TTS created, waiting for engine")
+                if await asyncio.to_thread(self._tts.wait_ready, 6):   # note the ()
+                    _log("alarm: engine ready, speaking")
                     self._tts.speak(spoken)
+                    _log("alarm: speak() returned")
                 else:
-                    print(f"TTS init failed, status={self._tts._listener.status}")
+                    _log(f"alarm: TTS init failed, status={self._tts.status}")
+                    print(f"TTS init failed, status={self._tts.status}")
             except Exception as err:
+                _log(f"alarm: TTS error: {err}")
                 print(f"TTS error: {err}")
 
             if record:
@@ -453,6 +481,29 @@ class SmartAlert:
         except Exception as err:
             print(f"Error restoring alarms: {err}")
 
+    # ---------------- Debug log ----------------
+    async def show_last_log(self):
+        """Show what the previous run recorded (e.g. where it crashed), then reset the log."""
+        await asyncio.sleep(2)
+        try:
+            text = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else ""
+            LOG_FILE.write_text("", encoding="utf-8")
+            _log("app started")
+            if text.strip():
+                self.page.show_dialog(
+                    ft.AlertDialog(
+                        title=ft.Text("Previous run log"),
+                        content=ft.Column(
+                            [ft.Text(text[-1800:], selectable=True, size=11)],
+                            scroll=ft.ScrollMode.AUTO,
+                            height=320,
+                        ),
+                        actions=[ft.TextButton("OK", on_click=lambda _: self.close_dialog())],
+                    )
+                )
+        except Exception as err:
+            print(f"Log display failed: {err}")
+
     # ---------------- Test + permissions ----------------
     async def test_notification(self):
         body = "If you see this, notifications are working!"
@@ -474,20 +525,26 @@ class SmartAlert:
         """Speak a test sentence and show the result in a dialog (no console needed)."""
         await asyncio.sleep(2)  # let the notification toast pass first
         try:
+            _log("test: creating TTS")
             t = tts.TTS()
             self._tts = t
-            ok = await asyncio.to_thread(t.wait_ready, 5)
+            _log("test: TTS created, waiting for engine")
+            ok = await asyncio.to_thread(t.wait_ready, 6)
             if ok:
+                _log("test: engine ready, speaking")
                 t.speak("Voice test. Mathematics, in two minutes.")
+                _log("test: speak() returned")
                 result = f"TTS READY ({t.context_source}). You should hear a voice now."
             else:
                 result = (
-                    f"TTS NOT READY. status={t._listener.status} "
-                    f"(None = engine never answered, -1 = engine error). "
-                    f"context={t.context_source}"
+                    f"TTS NOT READY. status={t.status} "
+                    f"(-1 = engine not bound or no voice data, -2 = language unsupported, "
+                    f"None = call failed). context={t.context_source}"
                 )
+                _log("test: " + result)
         except Exception as err:
             result = f"TTS CRASHED: {err}"
+            _log("test: " + result)
         self.page.show_dialog(
             ft.AlertDialog(
                 title=ft.Text("Voice test"),
