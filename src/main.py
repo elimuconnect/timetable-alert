@@ -34,7 +34,7 @@ def _log(msg: str):
 try:
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     _FAULT_FILE = open(LOG_FILE, "a")
-    faulthandler.enable(_FAULT_FILE)  # writes a Python traceback if the app hard-crashes
+    faulthandler.enable(_FAULT_FILE)
 except Exception:
     pass
 
@@ -47,6 +47,13 @@ class SmartAlert:
     def __init__(self, page: ft.Page):
         self.page = page
         self._last_alarm_signature = None
+
+        # ------------------------------------------------------------
+        # TTS
+        # Keep ONE native Android TTS instance alive and reuse it.
+        # ------------------------------------------------------------
+        self._tts = None
+        self._tts_initializing = False
 
         html = (BASE_DIR / "index.html").read_text(encoding="utf-8")
         self.webview = fwa.FletWebviewAll(
@@ -81,6 +88,7 @@ class SmartAlert:
 
         for job in (
             self.request_permission,
+            self.initialize_tts,
             self.restore_alarms,
             self.check_for_alarm_intent,
             self.monitor_alarm_intents,
@@ -90,6 +98,107 @@ class SmartAlert:
 
         page.on_route_change = lambda _: asyncio.create_task(self.check_for_alarm_intent())
         page.on_resume = lambda _: asyncio.create_task(self.check_for_alarm_intent())
+
+    # ------------------------------------------------------------
+    # Native Android TTS
+    # ------------------------------------------------------------
+
+    async def initialize_tts(self):
+        """Initialize native Android TTS once when the app starts."""
+        if self._tts is not None and self._tts.ready:
+            return True
+
+        if self._tts_initializing:
+            return False
+
+        self._tts_initializing = True
+
+        try:
+            _log("startup: creating TTS")
+
+            self._tts = tts.TTS()
+
+            _log(
+                f"startup: TTS created, "
+                f"context={self._tts.context_source}"
+            )
+
+            ready = await asyncio.to_thread(
+                self._tts.wait_ready,
+                8
+            )
+
+            if ready:
+                _log(
+                    f"startup: TTS READY, "
+                    f"status={self._tts.status}"
+                )
+                return True
+
+            _log(
+                f"startup: TTS NOT READY, "
+                f"status={self._tts.status}, "
+                f"error={getattr(self._tts, 'error', None)}"
+            )
+
+            return False
+
+        except Exception as err:
+            _log(f"startup: TTS ERROR: {err}")
+            print(f"TTS initialization error: {err}")
+            self._tts = None
+            return False
+
+        finally:
+            self._tts_initializing = False
+
+    async def _ensure_tts_ready(self):
+        """Make sure native Android TTS is ready before speaking."""
+
+        if self._tts is not None and self._tts.ready:
+            return True
+
+        if self._tts is None:
+            await self.initialize_tts()
+
+        if self._tts is not None and self._tts.ready:
+            return True
+
+        return False
+
+    def _speak_alert(self, spoken: str):
+        """Send the alert text to native Android TTS."""
+        try:
+            spoken = str(spoken).strip()
+
+            if not spoken:
+                _log("TTS: empty speech text")
+                return False
+
+            if self._tts is None:
+                _log("TTS: no TTS object")
+                return False
+
+            if not self._tts.ready:
+                _log(
+                    f"TTS: not ready, "
+                    f"status={self._tts.status}, "
+                    f"error={getattr(self._tts, 'error', None)}"
+                )
+                return False
+
+            _log(f"TTS: speaking {spoken!r}")
+
+            result = self._tts.speak(spoken)
+
+            _log(f"TTS: speak returned {result}")
+
+            return result
+
+        except Exception as err:
+            _log(f"TTS: speak error: {err}")
+            print(f"TTS speak error: {err}")
+            return False
 
     # ---------------- WebView -> Python ----------------
     def on_message(self, e):
@@ -162,7 +271,7 @@ class SmartAlert:
             else:
                 records.append(record)
 
-        if lessons and not records:  # all invalid: keep existing alerts
+        if lessons and not records:
             return 0, skipped
 
         for old in self._load_records():
@@ -228,7 +337,12 @@ class SmartAlert:
         text = str(value or "").strip()
         if not text:
             return None
-        start = re.split(r"\s*[-\u2013\u2014]\s*|\s+to\s+", text, maxsplit=1, flags=re.I)[0].strip()
+        start = re.split(
+            r"\s*[-\u2013\u2014]\s*|\s+to\s+",
+            text,
+            maxsplit=1,
+            flags=re.I
+        )[0].strip()
         for fmt in self.TIME_FORMATS:
             try:
                 return datetime.strptime(start.upper(), fmt).time()
@@ -266,7 +380,7 @@ class SmartAlert:
                 continue
             try:
                 parts = line.split("|")
-                if len(parts) == 6:      # old files without speech
+                if len(parts) == 6:
                     parts.append("")
                 id_, alarm, klass, rem, subject, grade, speech = parts
                 records.append(
@@ -403,6 +517,7 @@ class SmartAlert:
             self._last_alarm_signature = signature
 
             record = self._find_triggered(datetime.now(), alarm_id)
+
             if record:
                 title = f"Class Starting: {record['subject']}"
                 body = (
@@ -415,8 +530,18 @@ class SmartAlert:
                 title = intent.getStringExtra("notification_title") or "Class Reminder"
                 body = intent.getStringExtra("notification_body") or "Check your timetable."
 
-            self._send_notification(self._build_notification(nt_id, title, body, True), body)
+            # --------------------------------------------------------
+            # Keep existing notification behavior unchanged.
+            # --------------------------------------------------------
+            self._send_notification(
+                self._build_notification(nt_id, title, body, True),
+                body
+            )
 
+            # --------------------------------------------------------
+            # NATIVE ANDROID TTS
+            # Reuse the already initialized TTS engine.
+            # --------------------------------------------------------
             try:
                 if record:
                     spoken = record.get("speech") or (
@@ -427,16 +552,31 @@ class SmartAlert:
                 else:
                     spoken = body
 
-                _log(f"alarm: creating TTS, text={spoken!r}")
-                self._tts = tts.TTS()                                  # keep a reference
-                _log("alarm: TTS created, waiting for engine")
-                if await asyncio.to_thread(self._tts.wait_ready, 6):   # note the ()
-                    _log("alarm: engine ready, speaking")
-                    self._tts.speak(spoken)
-                    _log("alarm: speak() returned")
+                _log(f"alarm: speech text={spoken!r}")
+
+                # Make sure TTS exists and is ready.
+                ready = await self._ensure_tts_ready()
+
+                if ready:
+                    _log(
+                        f"alarm: TTS ready, "
+                        f"status={self._tts.status}"
+                    )
+
+                    success = self._speak_alert(spoken)
+
+                    if success:
+                        _log("alarm: TTS speech command sent successfully")
+                    else:
+                        _log("alarm: TTS speech command failed")
+
                 else:
-                    _log(f"alarm: TTS init failed, status={self._tts.status}")
-                    print(f"TTS init failed, status={self._tts.status}")
+                    _log(
+                        f"alarm: TTS unavailable, "
+                        f"status={getattr(self._tts, 'status', None)}, "
+                        f"error={getattr(self._tts, 'error', None)}"
+                    )
+
             except Exception as err:
                 _log(f"alarm: TTS error: {err}")
                 print(f"TTS error: {err}")
@@ -444,15 +584,25 @@ class SmartAlert:
             if record:
                 ct = record["class_time"]
                 self._show_class_dialog(
-                    ct.strftime("%A"), ct.strftime("%H:%M"), record["subject"], record["grade"]
+                    ct.strftime("%A"),
+                    ct.strftime("%H:%M"),
+                    record["subject"],
+                    record["grade"]
                 )
+
             self._reschedule_next(alarm_id)
 
-            for key in ("is_alarm_trigger", "notification_id", "notification_title", "notification_body"):
+            for key in (
+                "is_alarm_trigger",
+                "notification_id",
+                "notification_title",
+                "notification_body"
+            ):
                 try:
                     intent.removeExtra(key)
                 except Exception:
                     pass
+
         except Exception as err:
             print(f"Intent check error: {err}")
 
@@ -473,11 +623,18 @@ class SmartAlert:
                     r["class_time"], r["time"] = class_time, alarm
                     changed = True
                 try:
-                    self._schedule_alarm(r["id"], alarm, r["subject"], r["grade"])
+                    self._schedule_alarm(
+                        r["id"],
+                        alarm,
+                        r["subject"],
+                        r["grade"]
+                    )
                 except Exception as err:
                     print(f"Alarm restore unavailable: {err}")
+
             if changed:
                 self._save_records(records)
+
         except Exception as err:
             print(f"Error restoring alarms: {err}")
 
@@ -486,87 +643,173 @@ class SmartAlert:
         """Show what the previous run recorded (e.g. where it crashed), then reset the log."""
         await asyncio.sleep(2)
         try:
-            text = LOG_FILE.read_text(encoding="utf-8", errors="replace") if LOG_FILE.exists() else ""
+            text = (
+                LOG_FILE.read_text(
+                    encoding="utf-8",
+                    errors="replace"
+                )
+                if LOG_FILE.exists()
+                else ""
+            )
+
             LOG_FILE.write_text("", encoding="utf-8")
             _log("app started")
+
             if text.strip():
                 self.page.show_dialog(
                     ft.AlertDialog(
                         title=ft.Text("Previous run log"),
                         content=ft.Column(
-                            [ft.Text(text[-1800:], selectable=True, size=11)],
+                            [
+                                ft.Text(
+                                    text[-1800:],
+                                    selectable=True,
+                                    size=11
+                                )
+                            ],
                             scroll=ft.ScrollMode.AUTO,
                             height=320,
                         ),
-                        actions=[ft.TextButton("OK", on_click=lambda _: self.close_dialog())],
+                        actions=[
+                            ft.TextButton(
+                                "OK",
+                                on_click=lambda _: self.close_dialog()
+                            )
+                        ],
                     )
                 )
+
         except Exception as err:
             print(f"Log display failed: {err}")
 
     # ---------------- Test + permissions ----------------
     async def test_notification(self):
         body = "If you see this, notifications are working!"
+
         try:
             sent = self._send_notification(
-                self._build_notification(999, "Test Notification", body), body
+                self._build_notification(
+                    999,
+                    "Test Notification",
+                    body
+                ),
+                body
             )
+
             self._toast(
                 "Test sent! Check your notification tray."
                 if sent
                 else "Test failed. Check Android notification settings.",
                 ok=sent,
             )
+
             asyncio.create_task(self.test_voice())
+
         except Exception as err:
-            self._toast(f"Error sending test notification: {err}", ok=False)
+            self._toast(
+                f"Error sending test notification: {err}",
+                ok=False
+            )
 
     async def test_voice(self):
-        """Speak a test sentence and show the result in a dialog (no console needed)."""
-        await asyncio.sleep(2)  # let the notification toast pass first
+        """Speak a test sentence and show the result in a dialog."""
+        await asyncio.sleep(2)
+
         try:
-            _log("test: creating TTS")
-            t = tts.TTS()
-            self._tts = t
-            _log("test: TTS created, waiting for engine")
-            ok = await asyncio.to_thread(t.wait_ready, 6)
-            if ok:
-                _log("test: engine ready, speaking")
-                t.speak("Voice test. Mathematics, in two minutes.")
-                _log("test: speak() returned")
-                result = f"TTS READY ({t.context_source}). You should hear a voice now."
+            _log("test: starting native TTS test")
+
+            # Reuse the startup TTS instance.
+            ready = await self._ensure_tts_ready()
+
+            if ready:
+                _log("test: TTS ready")
+
+                success = self._speak_alert(
+                    "Voice test. Mathematics, in two minutes."
+                )
+
+                if success:
+                    result = (
+                        f"TTS READY ({self._tts.context_source}).\n\n"
+                        "Speech command sent successfully.\n"
+                        "You should hear a voice now."
+                    )
+                else:
+                    result = (
+                        f"TTS READY ({self._tts.context_source}), "
+                        "but the speak command failed.\n\n"
+                        f"Status: {self._tts.status}\n"
+                        f"Error: {getattr(self._tts, 'error', None)}"
+                    )
+
             else:
                 result = (
-                    f"TTS NOT READY. status={t.status} "
-                    f"(-1 = engine not bound or no voice data, -2 = language unsupported, "
-                    f"None = call failed). context={t.context_source}"
+                    "TTS NOT READY.\n\n"
+                    f"Status: {getattr(self._tts, 'status', None)}\n"
+                    f"Error: {getattr(self._tts, 'error', None)}\n"
+                    f"Context: {getattr(self._tts, 'context_source', 'unknown')}"
                 )
+
                 _log("test: " + result)
+
         except Exception as err:
             result = f"TTS CRASHED: {err}"
             _log("test: " + result)
+
         self.page.show_dialog(
             ft.AlertDialog(
                 title=ft.Text("Voice test"),
-                content=ft.Text(result, selectable=True),
-                actions=[ft.TextButton("OK", on_click=lambda _: self.close_dialog())],
+                content=ft.Text(
+                    result,
+                    selectable=True
+                ),
+                actions=[
+                    ft.TextButton(
+                        "OK",
+                        on_click=lambda _: self.close_dialog()
+                    )
+                ],
             )
         )
 
     async def request_permission(self):
         ph = fph.PermissionHandler()
-        exact_alarm = await ph.request(fph.Permission.SCHEDULE_EXACT_ALARM)
-        notification = await ph.request(fph.Permission.NOTIFICATION)
-        overlay = await ph.request(fph.Permission.SYSTEM_ALERT_WINDOW)
-        await ph.request(fph.Permission.IGNORE_BATTERY_OPTIMIZATIONS)
+
+        exact_alarm = await ph.request(
+            fph.Permission.SCHEDULE_EXACT_ALARM
+        )
+
+        notification = await ph.request(
+            fph.Permission.NOTIFICATION
+        )
+
+        overlay = await ph.request(
+            fph.Permission.SYSTEM_ALERT_WINDOW
+        )
+
+        await ph.request(
+            fph.Permission.IGNORE_BATTERY_OPTIMIZATIONS
+        )
 
         for result, text in (
-            (exact_alarm, "Schedule exact alarm permission is required for timely class reminders."),
-            (notification, "Notification permission is required for timely class reminders."),
-            (overlay, "Overlay permission is required to show reminders on top of other apps."),
+            (
+                exact_alarm,
+                "Schedule exact alarm permission is required for timely class reminders."
+            ),
+            (
+                notification,
+                "Notification permission is required for timely class reminders."
+            ),
+            (
+                overlay,
+                "Overlay permission is required to show reminders on top of other apps."
+            ),
         ):
             if result.name == "DENIED":
-                self._toast(text + " Please enable it in settings.", ok=False)
+                self._toast(
+                    text + " Please enable it in settings.",
+                    ok=False
+                )
 
 
 def main(page: ft.Page):
