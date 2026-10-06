@@ -3,8 +3,6 @@ import time
 
 Locale = autoclass("java.util.Locale")
 TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
-ActivityThread = autoclass("android.app.ActivityThread")
-Bundle = autoclass("android.os.Bundle")
 
 
 class InitListener(PythonJavaClass):
@@ -22,17 +20,32 @@ class InitListener(PythonJavaClass):
         self.ready = (status == TextToSpeech.SUCCESS)
 
 
+def _get_context():
+    """Return (context, source). Prefer the app's activity; fall back to ActivityThread."""
+    try:
+        from flet_alarm import PythonActivity
+
+        if PythonActivity and PythonActivity.mActivity is not None:
+            return PythonActivity.mActivity.getApplicationContext(), "activity"
+    except Exception:
+        pass
+    ActivityThread = autoclass("android.app.ActivityThread")
+    app = ActivityThread.currentApplication()
+    if app is None:
+        raise RuntimeError("No Android context available")
+    return app.getApplicationContext(), "activity-thread"
+
+
 class TTS:
     def __init__(self):
-        # In Flet there's no PythonActivity (that's Kivy/p4a),
-        # so grab the application context this way:
-        context = ActivityThread.currentApplication().getApplicationContext()
+        context, self.context_source = _get_context()
         self._listener = InitListener()          # keep a reference, or it gets garbage collected
         self._tts = TextToSpeech(context, self._listener)
 
     def wait_ready(self, timeout=5):
         t = time.time()
-        while not self._listener.ready and time.time() - t < timeout:
+        # stop waiting as soon as Android answers (success OR error)
+        while self._listener.status is None and time.time() - t < timeout:
             time.sleep(0.1)
         if self._listener.ready:
             self._tts.setLanguage(Locale.US)
@@ -46,4 +59,3 @@ class TTS:
     def shutdown(self):
         self._tts.stop()
         self._tts.shutdown()
-
