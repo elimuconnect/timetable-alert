@@ -14,44 +14,111 @@ def _get_context():
             return PythonActivity.mActivity.getApplicationContext(), "activity"
     except Exception:
         pass
+
     ActivityThread = autoclass("android.app.ActivityThread")
     app = ActivityThread.currentApplication()
+
     if app is None:
         raise RuntimeError("No Android context available")
+
     return app.getApplicationContext(), "activity-thread"
 
 
 class TTS:
-    """Text-to-speech WITHOUT a Python callback (avoids pyjnius proxy crashes).
+    """Reliable Android Text-to-Speech wrapper.
 
-    The engine binds asynchronously. Until it is bound, setLanguage() returns
-    an error code (-1); once bound it returns >= 0. We poll that instead of
-    waiting for an OnInitListener.
+    Keeps the original structure and avoids Python OnInitListener callbacks.
+    The engine is initialized first, then the language is tested before
+    allowing speech.
     """
 
     def __init__(self):
         context, self.context_source = _get_context()
+
         self.status = None
         self.ready = False
+        self.error = None
+
+        # Create the Android TTS engine.
         self._tts = TextToSpeech(context, None)
 
-    def wait_ready(self, timeout=6):
-        t = time.time()
-        while time.time() - t < timeout:
+        # Give Android time to bind the TTS engine.
+        time.sleep(0.5)
+
+    def wait_ready(self, timeout=8):
+        """Wait until Android TTS is ready and English can be used."""
+
+        start = time.time()
+
+        while time.time() - start < timeout:
             try:
                 self.status = self._tts.setLanguage(Locale.US)
-            except Exception:
+
+                # Android returns:
+                # LANG_MISSING_DATA = -1
+                # LANG_NOT_SUPPORTED = -2
+                # otherwise a valid language status >= 0
+
+                if self.status == TextToSpeech.LANG_MISSING_DATA:
+                    self.error = "TTS language data is missing"
+
+                elif self.status == TextToSpeech.LANG_NOT_SUPPORTED:
+                    self.error = "English (US) is not supported"
+
+                elif self.status is not None and self.status >= 0:
+                    self.ready = True
+                    self.error = None
+                    return True
+
+            except Exception as err:
                 self.status = None
-            if self.status is not None and self.status >= 0:
-                self.ready = True
-                return True
+                self.error = str(err)
+
             time.sleep(0.25)
+
         return False
 
     def speak(self, text):
-        if self.ready:
-            # QUEUE_FLUSH = 0, QUEUE_ADD = 1
-            self._tts.speak(text, TextToSpeech.QUEUE_FLUSH, None, "lesson_alert")
+        """Speak the supplied alert text."""
+
+        if not self.ready:
+            print(
+                f"TTS not ready. "
+                f"status={self.status}, "
+                f"error={self.error}"
+            )
+            return False
+
+        try:
+            text = str(text).strip()
+
+            if not text:
+                print("TTS received empty text.")
+                return False
+
+            print(f"TTS speaking: {text}")
+
+            result = self._tts.speak(
+                text,
+                TextToSpeech.QUEUE_FLUSH,
+                None,
+                "lesson_alert"
+            )
+
+            print(f"TTS speak result: {result}")
+
+            return True
+
+        except Exception as err:
+            print(f"TTS speak error: {err}")
+            self.error = str(err)
+            return False
+
+    def stop(self):
+        try:
+            self._tts.stop()
+        except Exception:
+            pass
 
     def shutdown(self):
         try:
