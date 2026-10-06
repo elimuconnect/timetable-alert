@@ -1,4 +1,3 @@
-
 [project]
 name = "Class-Alert"
 version = "0.1.2"
@@ -14,7 +13,7 @@ dependencies = [
     "pyjnius==1.7.0",
     "plyer",
     "android-notify",
-    "flet-webview-all", 
+    "flet-webview-all",
 ]
 
 [dependency-groups]
@@ -46,6 +45,10 @@ jni = "1.1.0"
 "android.permission.SYSTEM_ALERT_WINDOW" = true
 "android.permission.MANAGE_EXTERNAL_STORAGE" = true
 "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" = true
+
+# Background execution support
+"android.permission.FOREGROUND_SERVICE" = true
+"android.permission.FOREGROUND_SERVICE_SPECIAL_USE" = true
 
 [tool.flet.splash]
 color = "#ffffff"
