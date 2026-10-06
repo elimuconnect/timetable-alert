@@ -83,17 +83,11 @@ class FletAlarm:
         return flags
 
     def _apply_alarm_launch_flags(self, intent):
-        """
-        Configure the launch intent so Android can bring the app back and
-        deliver fresh extras even when the activity already exists or the app
-        process was previously stopped.
-        """
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        if self.context is not None:
-            intent.setPackage(self.context.getPackageName())
-        return intent
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    if self.context is not None:
+        intent.setPackage(self.context.getPackageName())
+    return intent
 
     def set_alarm(
         self,
