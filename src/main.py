@@ -549,6 +549,20 @@ class SmartAlert:
                 _log("alarm-check: intent is None")
                 return
 
+            # --------------------------------------------------------
+            # READ THE ALARM ACTION
+            # --------------------------------------------------------
+
+            action = intent.getAction()
+
+            _log(
+                f"alarm-check: action={action}"
+            )
+
+            # --------------------------------------------------------
+            # READ THE NORMAL ALARM FLAG
+            # --------------------------------------------------------
+
             is_alarm = intent.getBooleanExtra(
                 "is_alarm_trigger",
                 False
@@ -558,8 +572,45 @@ class SmartAlert:
                 f"alarm-check: is_alarm_trigger={is_alarm}"
             )
 
+            # --------------------------------------------------------
+            # FALLBACK:
+            # The alarm action itself contains the alarm ID:
+            #
+            # com.zaimtech.ALARM_12
+            #
+            # If Android preserved the action but not the Boolean
+            # extra, still treat it as an alarm.
+            # --------------------------------------------------------
+
+            action_alarm_id = None
+
+            if (
+                isinstance(action, str)
+                and action.startswith("com.zaimtech.ALARM_")
+            ):
+                try:
+                    action_alarm_id = int(
+                        action.rsplit("_", 1)[1]
+                    )
+
+                    _log(
+                        f"alarm-check: alarm ID recovered "
+                        f"from action={action_alarm_id}"
+                    )
+
+                    is_alarm = True
+
+                except (ValueError, IndexError):
+                    _log(
+                        f"alarm-check: invalid alarm action={action}"
+                    )
+
             if not is_alarm:
                 return
+
+            # --------------------------------------------------------
+            # READ ALARM IDS
+            # --------------------------------------------------------
 
             nt_id = intent.getIntExtra(
                 "notification_id",
@@ -568,8 +619,16 @@ class SmartAlert:
 
             alarm_id = intent.getIntExtra(
                 "alarm_id",
-                nt_id
+                0
             )
+
+            # If the extras were lost but the action survived,
+            # use the ID recovered from the action.
+            if alarm_id == 0 and action_alarm_id is not None:
+                alarm_id = action_alarm_id
+
+            if nt_id == 0:
+                nt_id = alarm_id
 
             scheduled_at = intent.getLongExtra(
                 "scheduled_at_ms",
@@ -670,7 +729,6 @@ class SmartAlert:
                     f"alarm: speech text={spoken!r}"
                 )
 
-                # Make sure TTS is ready.
                 ready = await self._ensure_tts_ready()
 
                 if not ready:
@@ -679,7 +737,6 @@ class SmartAlert:
                         "trying initialization again"
                     )
 
-                    # Give Android TTS another chance.
                     await self.initialize_tts()
 
                     ready = (
