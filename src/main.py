@@ -158,10 +158,36 @@ class SmartAlert:
         if self._tts is not None and self._tts.ready:
             return True
 
-        if self._tts is None:
+        # If startup is already initializing TTS, wait for it
+        # instead of immediately giving up.
+        if self._tts_initializing:
+            _log(
+                "TTS: initialization already running; waiting"
+            )
+
+            for _ in range(40):
+                await asyncio.sleep(0.25)
+
+                if (
+                    self._tts is not None
+                    and self._tts.ready
+                ):
+                    _log(
+                        "TTS: initialization completed successfully"
+                    )
+                    return True
+
+                if not self._tts_initializing:
+                    break
+
+        # If there is still no ready TTS instance, initialize it.
+        if self._tts is None or not self._tts.ready:
             await self.initialize_tts()
 
-        if self._tts is not None and self._tts.ready:
+        if (
+            self._tts is not None
+            and self._tts.ready
+        ):
             return True
 
         return False
@@ -502,60 +528,164 @@ class SmartAlert:
         try:
             from flet_alarm import PythonActivity, cast
 
-            if not PythonActivity or PythonActivity.mActivity is None:
-                return
-            activity = cast("android.app.Activity", PythonActivity.mActivity)
-            intent = activity.getIntent()
-            if intent is None or not intent.getBooleanExtra("is_alarm_trigger", False):
+            _log("alarm-check: checking activity")
+
+            if not PythonActivity:
+                _log("alarm-check: PythonActivity unavailable")
                 return
 
-            nt_id = intent.getIntExtra("notification_id", 0)
-            alarm_id = intent.getIntExtra("alarm_id", nt_id)
-            signature = (alarm_id, intent.getLongExtra("scheduled_at_ms", 0))
-            if signature == self._last_alarm_signature:
+            if PythonActivity.mActivity is None:
+                _log("alarm-check: mActivity unavailable")
                 return
+
+            activity = cast(
+                "android.app.Activity",
+                PythonActivity.mActivity
+            )
+
+            intent = activity.getIntent()
+
+            if intent is None:
+                _log("alarm-check: intent is None")
+                return
+
+            is_alarm = intent.getBooleanExtra(
+                "is_alarm_trigger",
+                False
+            )
+
+            _log(
+                f"alarm-check: is_alarm_trigger={is_alarm}"
+            )
+
+            if not is_alarm:
+                return
+
+            nt_id = intent.getIntExtra(
+                "notification_id",
+                0
+            )
+
+            alarm_id = intent.getIntExtra(
+                "alarm_id",
+                nt_id
+            )
+
+            scheduled_at = intent.getLongExtra(
+                "scheduled_at_ms",
+                0
+            )
+
+            signature = (
+                alarm_id,
+                scheduled_at
+            )
+
+            _log(
+                f"alarm-check: TRIGGERED "
+                f"alarm_id={alarm_id}, "
+                f"notification_id={nt_id}, "
+                f"scheduled_at={scheduled_at}"
+            )
+
+            if signature == self._last_alarm_signature:
+                _log(
+                    "alarm-check: duplicate alarm ignored"
+                )
+                return
+
             self._last_alarm_signature = signature
 
-            record = self._find_triggered(datetime.now(), alarm_id)
+            record = self._find_triggered(
+                datetime.now(),
+                alarm_id
+            )
 
             if record:
-                title = f"Class Starting: {record['subject']}"
+                title = (
+                    f"Class Starting: "
+                    f"{record['subject']}"
+                )
+
                 body = (
-                    f"Grade: {record['grade']} is waiting for you."
+                    f"Grade: {record['grade']} "
+                    f"is waiting for you."
                     if record["grade"]
                     else "Your lesson is starting."
                 )
+
                 nt_id = record["id"]
+
             else:
-                title = intent.getStringExtra("notification_title") or "Class Reminder"
-                body = intent.getStringExtra("notification_body") or "Check your timetable."
+                title = (
+                    intent.getStringExtra(
+                        "notification_title"
+                    )
+                    or "Class Reminder"
+                )
+
+                body = (
+                    intent.getStringExtra(
+                        "notification_body"
+                    )
+                    or "Check your timetable."
+                )
 
             # --------------------------------------------------------
-            # Keep existing notification behavior unchanged.
+            # SEND NOTIFICATION
             # --------------------------------------------------------
+
             self._send_notification(
-                self._build_notification(nt_id, title, body, True),
+                self._build_notification(
+                    nt_id,
+                    title,
+                    body,
+                    True
+                ),
                 body
             )
 
             # --------------------------------------------------------
-            # NATIVE ANDROID TTS
-            # Reuse the already initialized TTS engine.
+            # SPEAK ALARM
             # --------------------------------------------------------
+
             try:
                 if record:
-                    spoken = record.get("speech") or (
-                        record["subject"]
-                        + (f", {record['grade']}" if record["grade"] else "")
-                        + ", starts now"
+                    spoken = (
+                        record.get("speech")
+                        or (
+                            record["subject"]
+                            + (
+                                f", {record['grade']}"
+                                if record["grade"]
+                                else ""
+                            )
+                            + ", starts now"
+                        )
                     )
                 else:
                     spoken = body
 
-                _log(f"alarm: speech text={spoken!r}")
+                _log(
+                    f"alarm: speech text={spoken!r}"
+                )
 
-                # Make sure TTS exists and is ready.
+                # Make sure TTS is ready.
                 ready = await self._ensure_tts_ready()
+
+                if not ready:
+                    _log(
+                        "alarm: TTS was not ready; "
+                        "trying initialization again"
+                    )
+
+                    # Give Android TTS another chance.
+                    await self.initialize_tts()
+
+                    ready = (
+                        self._tts is not None
+                        and self._tts.ready
+                    )
 
                 if ready:
                     _log(
@@ -563,26 +693,43 @@ class SmartAlert:
                         f"status={self._tts.status}"
                     )
 
-                    success = self._speak_alert(spoken)
+                    success = self._speak_alert(
+                        spoken
+                    )
 
                     if success:
-                        _log("alarm: TTS speech command sent successfully")
+                        _log(
+                            "alarm: TTS speech command "
+                            "sent successfully"
+                        )
                     else:
-                        _log("alarm: TTS speech command failed")
+                        _log(
+                            "alarm: TTS speech command failed"
+                        )
 
                 else:
                     _log(
-                        f"alarm: TTS unavailable, "
+                        "alarm: TTS unavailable after retry, "
                         f"status={getattr(self._tts, 'status', None)}, "
                         f"error={getattr(self._tts, 'error', None)}"
                     )
 
             except Exception as err:
-                _log(f"alarm: TTS error: {err}")
-                print(f"TTS error: {err}")
+                _log(
+                    f"alarm: TTS error: {err}"
+                )
+
+                print(
+                    f"TTS error: {err}"
+                )
+
+            # --------------------------------------------------------
+            # SHOW CLASS DIALOG
+            # --------------------------------------------------------
 
             if record:
                 ct = record["class_time"]
+
                 self._show_class_dialog(
                     ct.strftime("%A"),
                     ct.strftime("%H:%M"),
@@ -590,21 +737,41 @@ class SmartAlert:
                     record["grade"]
                 )
 
-            self._reschedule_next(alarm_id)
+            # --------------------------------------------------------
+            # SCHEDULE NEXT WEEK
+            # --------------------------------------------------------
+
+            self._reschedule_next(
+                alarm_id
+            )
+
+            # --------------------------------------------------------
+            # REMOVE TRIGGER MARKERS
+            # --------------------------------------------------------
 
             for key in (
                 "is_alarm_trigger",
                 "notification_id",
                 "notification_title",
-                "notification_body"
+                "notification_body",
             ):
                 try:
                     intent.removeExtra(key)
                 except Exception:
                     pass
 
+            _log(
+                f"alarm-check: alarm {alarm_id} handled successfully"
+            )
+
         except Exception as err:
-            print(f"Intent check error: {err}")
+            _log(
+                f"alarm-check: ERROR: {err}"
+            )
+
+            print(
+                f"Intent check error: {err}"
+            )
 
     async def monitor_alarm_intents(self):
         while True:
