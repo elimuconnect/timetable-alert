@@ -466,8 +466,35 @@ class SmartAlert:
                 else "Test failed. Check Android notification settings.",
                 ok=sent,
             )
+            asyncio.create_task(self.test_voice())
         except Exception as err:
             self._toast(f"Error sending test notification: {err}", ok=False)
+
+    async def test_voice(self):
+        """Speak a test sentence and show the result in a dialog (no console needed)."""
+        await asyncio.sleep(2)  # let the notification toast pass first
+        try:
+            t = tts.TTS()
+            self._tts = t
+            ok = await asyncio.to_thread(t.wait_ready, 5)
+            if ok:
+                t.speak("Voice test. Mathematics, in two minutes.")
+                result = f"TTS READY ({t.context_source}). You should hear a voice now."
+            else:
+                result = (
+                    f"TTS NOT READY. status={t._listener.status} "
+                    f"(None = engine never answered, -1 = engine error). "
+                    f"context={t.context_source}"
+                )
+        except Exception as err:
+            result = f"TTS CRASHED: {err}"
+        self.page.show_dialog(
+            ft.AlertDialog(
+                title=ft.Text("Voice test"),
+                content=ft.Text(result, selectable=True),
+                actions=[ft.TextButton("OK", on_click=lambda _: self.close_dialog())],
+            )
+        )
 
     async def request_permission(self):
         ph = fph.PermissionHandler()
