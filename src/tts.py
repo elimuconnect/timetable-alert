@@ -3,6 +3,8 @@ import time
 
 Locale = autoclass("java.util.Locale")
 TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
+JavaString = autoclass("java.lang.String")
+Bundle = autoclass("android.os.Bundle")
 
 
 def _get_context():
@@ -11,7 +13,10 @@ def _get_context():
         from flet_alarm import PythonActivity
 
         if PythonActivity and PythonActivity.mActivity is not None:
-            return PythonActivity.mActivity.getApplicationContext(), "activity"
+            return (
+                PythonActivity.mActivity.getApplicationContext(),
+                "activity",
+            )
     except Exception:
         pass
 
@@ -25,12 +30,7 @@ def _get_context():
 
 
 class TTS:
-    """Reliable Android Text-to-Speech wrapper.
-
-    Keeps the original structure and avoids Python OnInitListener callbacks.
-    The engine is initialized first, then the language is tested before
-    allowing speech.
-    """
+    """Android Text-to-Speech wrapper compatible with Pyjnius."""
 
     def __init__(self):
         context, self.context_source = _get_context()
@@ -54,11 +54,6 @@ class TTS:
             try:
                 self.status = self._tts.setLanguage(Locale.US)
 
-                # Android returns:
-                # LANG_MISSING_DATA = -1
-                # LANG_NOT_SUPPORTED = -2
-                # otherwise a valid language status >= 0
-
                 if self.status == TextToSpeech.LANG_MISSING_DATA:
                     self.error = "TTS language data is missing"
 
@@ -79,7 +74,7 @@ class TTS:
         return False
 
     def speak(self, text):
-        """Speak the supplied alert text."""
+        """Speak text using Android TextToSpeech."""
 
         if not self.ready:
             print(
@@ -98,16 +93,24 @@ class TTS:
 
             print(f"TTS speaking: {text}")
 
+            # Explicit Java types prevent Pyjnius overload-resolution errors.
+            java_text = JavaString(text)
+            params = Bundle()
+
             result = self._tts.speak(
-                text,
+                java_text,
                 TextToSpeech.QUEUE_FLUSH,
-                None,
-                "lesson_alert"
+                params,
+                JavaString("lesson_alert"),
             )
 
             print(f"TTS speak result: {result}")
 
-            return True
+            if result == TextToSpeech.SUCCESS:
+                return True
+
+            self.error = f"Android TTS speak returned error code {result}"
+            return False
 
         except Exception as err:
             print(f"TTS speak error: {err}")
