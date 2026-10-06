@@ -127,18 +127,16 @@ class FletAlarm:
 
     def _apply_alarm_launch_flags(self, intent):
         """
-        Make sure an alarm can bring the existing Flet activity
-        to the foreground and deliver the new alarm Intent.
+        Force Android to create a fresh Flet Activity for the
+        alarm Intent.
 
-        SINGLE_TOP is important here because the Flet Activity may
-        already be running. In that case Android can deliver the
-        alarm Intent to the existing Activity instead of creating
-        another Activity instance.
+        The Python code checks activity.getIntent(). Therefore
+        the alarm Intent must become the Activity's actual launch
+        Intent instead of being delivered through onNewIntent().
         """
 
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
 
         if self.context is not None:
             intent.setPackage(
@@ -269,6 +267,11 @@ class FletAlarm:
 
             print(
                 f"DEBUG: trigger_at_ms={trigger_at_ms}"
+            )
+
+            print(
+                f"DEBUG: is_alarm_trigger=True "
+                f"for alarm {alarm_id}"
             )
 
             # ------------------------------------------------
