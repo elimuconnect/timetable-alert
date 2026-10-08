@@ -1,4 +1,4 @@
-import asyncio 
+import asyncio
 import base64
 import json
 import os
@@ -105,25 +105,19 @@ class SmartAlert:
         "%I %p",
     )
 
-    ALARM_ACTION_PREFIX = (
-        "com.zaimtech.CLASS_ALERT_ALARM_"
-    )
-
-    def __init__(self, page: ft.Page):
+    def __init__(
+        self,
+        page: ft.Page,
+    ):
 
         self.page = page
 
-        # Prevent duplicate processing of the same Android intent.
-        self._last_alarm_signature = None
-
-        # Prevent two alarm handlers from running simultaneously.
-        self._alarm_lock = asyncio.Lock()
-
-        # Prevent two scheduled TTS engines from speaking together.
-        self._tts_lock = asyncio.Lock()
-
         # --------------------------------------------------------
         # TTS STATE
+        #
+        # Python TTS is now used ONLY for the manual voice test.
+        #
+        # Scheduled alarms use native Kotlin AlarmReceiver.
         # --------------------------------------------------------
 
         self._tts = None
@@ -134,6 +128,7 @@ class SmartAlert:
         # --------------------------------------------------------
 
         try:
+
             html = (
                 BASE_DIR / "index.html"
             ).read_text(
@@ -178,10 +173,13 @@ class SmartAlert:
         self.picker = ft.FilePicker()
 
         try:
+
             page.services.append(
                 self.picker
             )
+
         except AttributeError:
+
             page.overlay.append(
                 self.picker
             )
@@ -204,10 +202,9 @@ class SmartAlert:
                         "and voice alert"
                     ),
                     icon_color=ft.Colors.GREEN,
-                    on_click=lambda _: (
-                        asyncio.create_task(
-                            self.test_notification()
-                        )
+                    on_click=lambda _:
+                    asyncio.create_task(
+                        self.test_notification()
                     ),
                 )
             ],
@@ -219,55 +216,39 @@ class SmartAlert:
 
         # --------------------------------------------------------
         # STARTUP TASKS
+        #
+        # IMPORTANT:
+        #
+        # There is NO alarm-intent monitor here.
+        #
+        # Android AlarmManager -> Kotlin AlarmReceiver
+        # is now the ONLY scheduled alarm execution path.
         # --------------------------------------------------------
 
         for job in (
             self.request_permission,
             self.initialize_tts,
             self.restore_alarms,
-            self.check_for_alarm_intent,
-            self.monitor_alarm_intents,
             self.show_last_log,
         ):
+
             asyncio.create_task(
                 job()
             )
-
-        # --------------------------------------------------------
-        # CHECK ALARM WHEN ROUTE / ACTIVITY CHANGES
-        # --------------------------------------------------------
-
-        page.on_route_change = (
-            lambda _:
-            asyncio.create_task(
-                self.check_for_alarm_intent()
-            )
-        )
-
-        page.on_resume = (
-            lambda _:
-            asyncio.create_task(
-                self.check_for_alarm_intent()
-            )
-        )
 
         _log(
             "startup: SmartAlert initialized"
         )
 
     # ============================================================
-    # NATIVE ANDROID TTS
+    # PYTHON TTS
+    #
+    # USED ONLY FOR MANUAL / TEST VOICE
     # ============================================================
 
-    async def initialize_tts(self):
-
-        """
-        Initialize the persistent Android TTS engine.
-
-        This engine is used for manual/test speech.
-        Scheduled alarms create their own engine because
-        Android may recreate the Python activity after an alarm.
-        """
+    async def initialize_tts(
+        self,
+    ):
 
         if (
             self._tts is not None
@@ -277,9 +258,11 @@ class SmartAlert:
                 False,
             )
         ):
+
             return True
 
         if self._tts_initializing:
+
             return False
 
         self._tts_initializing = True
@@ -294,7 +277,8 @@ class SmartAlert:
 
             _log(
                 "TTS startup: created; "
-                f"context={getattr(self._tts, 'context_source', 'unknown')}"
+                f"context="
+                f"{getattr(self._tts, 'context_source', 'unknown')}"
             )
 
             ready = await asyncio.to_thread(
@@ -306,15 +290,18 @@ class SmartAlert:
 
                 _log(
                     "TTS startup: READY; "
-                    f"status={getattr(self._tts, 'status', None)}"
+                    f"status="
+                    f"{getattr(self._tts, 'status', None)}"
                 )
 
                 return True
 
             _log(
                 "TTS startup: NOT READY; "
-                f"status={getattr(self._tts, 'status', None)}; "
-                f"error={getattr(self._tts, 'error', None)}"
+                f"status="
+                f"{getattr(self._tts, 'status', None)}; "
+                f"error="
+                f"{getattr(self._tts, 'error', None)}"
             )
 
             return False
@@ -337,12 +324,9 @@ class SmartAlert:
 
             self._tts_initializing = False
 
-    async def _ensure_tts_ready(self):
-
-        """
-        Wait for the persistent TTS engine if initialization
-        is already underway, otherwise initialize it.
-        """
+    async def _ensure_tts_ready(
+        self,
+    ):
 
         if (
             self._tts is not None
@@ -352,6 +336,7 @@ class SmartAlert:
                 False,
             )
         ):
+
             return True
 
         if self._tts_initializing:
@@ -375,13 +360,10 @@ class SmartAlert:
                     )
                 ):
 
-                    _log(
-                        "TTS: initialization completed"
-                    )
-
                     return True
 
                 if not self._tts_initializing:
+
                     break
 
         if (
@@ -408,10 +390,6 @@ class SmartAlert:
         self,
         spoken: str,
     ) -> bool:
-
-        """
-        Speak using the persistent TTS engine.
-        """
 
         try:
 
@@ -442,9 +420,7 @@ class SmartAlert:
             ):
 
                 _log(
-                    "TTS: engine not ready; "
-                    f"status={getattr(self._tts, 'status', None)}; "
-                    f"error={getattr(self._tts, 'error', None)}"
+                    "TTS: engine not ready"
                 )
 
                 return False
@@ -474,162 +450,6 @@ class SmartAlert:
             )
 
             return False
-
-    async def _speak_scheduled_alarm(
-        self,
-        spoken: str,
-    ) -> bool:
-
-        """
-        Speak a scheduled alarm using a fresh Android TTS
-        instance.
-
-        This is intentionally independent of the normal
-        persistent TTS instance because Android alarms can
-        launch/recreate the application process.
-        """
-
-        spoken = str(
-            spoken or ""
-        ).strip()
-
-        if not spoken:
-
-            _log(
-                "ALARM TTS: empty speech text"
-            )
-
-            return False
-
-        async with self._tts_lock:
-
-            fresh_tts = None
-
-            try:
-
-                _log(
-                    "ALARM TTS: creating fresh TTS"
-                )
-
-                fresh_tts = tts.TTS()
-
-                _log(
-                    "ALARM TTS: TTS created; "
-                    f"context={getattr(fresh_tts, 'context_source', 'unknown')}"
-                )
-
-                ready = await asyncio.to_thread(
-                    fresh_tts.wait_ready,
-                    10,
-                )
-
-                if not ready:
-
-                    _log(
-                        "ALARM TTS: NOT READY; "
-                        f"status={getattr(fresh_tts, 'status', None)}; "
-                        f"error={getattr(fresh_tts, 'error', None)}"
-                    )
-
-                    return False
-
-                _log(
-                    "ALARM TTS: READY; "
-                    f"status={getattr(fresh_tts, 'status', None)}"
-                )
-
-                # Give Android a short moment after initialization.
-                await asyncio.sleep(
-                    0.5
-                )
-
-                # Try the actual speech command.
-                success = fresh_tts.speak(
-                    spoken
-                )
-
-                _log(
-                    f"ALARM TTS: speak returned {success}"
-                )
-
-                if not success:
-
-                    # One retry can recover from occasional
-                    # Android TTS initialization races.
-                    _log(
-                        "ALARM TTS: first speak failed; retrying"
-                    )
-
-                    await asyncio.sleep(
-                        0.7
-                    )
-
-                    success = fresh_tts.speak(
-                        spoken
-                    )
-
-                    _log(
-                        f"ALARM TTS: retry speak returned {success}"
-                    )
-
-                if not success:
-
-                    return False
-
-                # Keep the TTS object alive until speech has had
-                # enough time to finish.
-                wait_seconds = max(
-                    4.0,
-                    min(
-                        15.0,
-                        2.0 + len(spoken) / 11.0,
-                    ),
-                )
-
-                _log(
-                    "ALARM TTS: keeping engine alive for "
-                    f"{wait_seconds:.1f}s"
-                )
-
-                await asyncio.sleep(
-                    wait_seconds
-                )
-
-                _log(
-                    "ALARM TTS: speech completed"
-                )
-
-                return True
-
-            except Exception as err:
-
-                _log(
-                    f"ALARM TTS: ERROR: {err}"
-                )
-
-                print(
-                    f"Scheduled alarm TTS error: {err}"
-                )
-
-                return False
-
-            finally:
-
-                if fresh_tts is not None:
-
-                    try:
-
-                        fresh_tts.shutdown()
-
-                        _log(
-                            "ALARM TTS: fresh engine shutdown"
-                        )
-
-                    except Exception as err:
-
-                        _log(
-                            f"ALARM TTS: shutdown ERROR: {err}"
-                        )
 
     # ============================================================
     # WEBVIEW -> PYTHON
@@ -778,11 +598,6 @@ class SmartAlert:
         self,
     ):
 
-        """
-        Open the Android file picker and send the selected DOCX
-        to the WebView as base64.
-        """
-
         try:
 
             files = await self.picker.pick_files(
@@ -848,7 +663,7 @@ class SmartAlert:
             )
 
             _log(
-                f"FILE: DOCX delivered to WebView: "
+                "FILE: DOCX delivered to WebView: "
                 f"{selected.name}"
             )
 
@@ -868,7 +683,7 @@ class SmartAlert:
             )
 
     # ============================================================
-    # TIMETABLE -> ALARMS
+    # TIMETABLE -> ANDROID ALARMS
     # ============================================================
 
     def sync_timetable(
@@ -908,18 +723,35 @@ class SmartAlert:
                 skipped,
             )
 
-        # Cancel previous alarms.
+        # --------------------------------------------------------
+        # CANCEL OLD ALARMS
+        # --------------------------------------------------------
+
         for old in self._load_records():
 
             self._cancel_alarm(
                 old["id"]
             )
 
+        # --------------------------------------------------------
+        # SAVE NEW RECORDS
+        # --------------------------------------------------------
+
         self._save_records(
             records
         )
 
-        # Schedule new alarms.
+        # --------------------------------------------------------
+        # SCHEDULE NEW NATIVE ANDROID ALARMS
+        #
+        # Kotlin AlarmReceiver owns:
+        #   notification
+        #   TTS
+        #   weekly repeat
+        # --------------------------------------------------------
+
+        successful = 0
+
         for record in records:
 
             try:
@@ -935,6 +767,8 @@ class SmartAlert:
                     ),
                 )
 
+                successful += 1
+
             except Exception as err:
 
                 _log(
@@ -946,7 +780,7 @@ class SmartAlert:
                 )
 
         return (
-            len(records),
+            successful,
             skipped,
         )
 
@@ -988,7 +822,7 @@ class SmartAlert:
         ):
 
             _log(
-                f"TIMETABLE: skipping invalid lesson: "
+                "TIMETABLE: skipping invalid lesson: "
                 f"{lesson}"
             )
 
@@ -1008,7 +842,6 @@ class SmartAlert:
             self.DEFAULT_REMINDER_MINUTES,
         )
 
-        # Do not allow an unreasonable reminder value.
         reminder = max(
             0,
             min(
@@ -1106,7 +939,6 @@ class SmartAlert:
         if len(text) < 2:
             return None
 
-        # Remove punctuation commonly produced by DOCX tables.
         text = re.sub(
             r"[^a-z]",
             "",
@@ -1128,7 +960,6 @@ class SmartAlert:
 
                 return i
 
-            # Also accept common abbreviations.
             if text == name_lower[:3]:
 
                 return i
@@ -1147,11 +978,6 @@ class SmartAlert:
         if not text:
             return None
 
-        # Examples:
-        # 8:20 - 9:00
-        # 8:20 – 9:00
-        # 8:20 — 9:00
-        # 8:20 to 9:00
         start = re.split(
             r"\s*[-\u2013\u2014]\s*"
             r"|\s+to\s+",
@@ -1160,14 +986,12 @@ class SmartAlert:
             flags=re.I,
         )[0].strip()
 
-        # Normalize spaces around AM/PM.
         start = re.sub(
             r"\s+",
             " ",
             start,
         ).strip()
 
-        # Accept forms such as "8.20".
         for fmt in self.TIME_FORMATS:
 
             try:
@@ -1178,9 +1002,9 @@ class SmartAlert:
                 ).time()
 
             except ValueError:
+
                 continue
 
-        # Additional robust handling of simple numeric times.
         match = re.fullmatch(
             r"(\d{1,2})[:.](\d{2})",
             start,
@@ -1229,7 +1053,6 @@ class SmartAlert:
             start,
         )
 
-        # If today's lesson time has already passed, use next week.
         if candidate <= now:
 
             candidate += timedelta(
@@ -1251,8 +1074,6 @@ class SmartAlert:
             )
         )
 
-        # If reminder time has already passed, don't schedule an
-        # alarm in the past. Schedule the actual class time instead.
         if alarm <= datetime.now():
 
             return class_time
@@ -1315,8 +1136,6 @@ class SmartAlert:
                     "|"
                 )
 
-                # Backward compatibility with records that did
-                # not yet contain speech.
                 if len(parts) == 6:
 
                     parts.append("")
@@ -1382,8 +1201,6 @@ class SmartAlert:
                 exist_ok=True,
             )
 
-            # Write to a temporary file first so a partial write
-            # does not destroy the saved timetable.
             temp_file = (
                 ALERTS_FILE.with_suffix(
                     ".tmp"
@@ -1423,7 +1240,7 @@ class SmartAlert:
             )
 
     # ============================================================
-    # ANDROID ALARMS / NOTIFICATIONS
+    # ANDROID ALARMS
     # ============================================================
 
     def _schedule_alarm(
@@ -1481,13 +1298,24 @@ class SmartAlert:
             f"speech={speech_text!r}"
         )
 
+        # --------------------------------------------------------
+        # IMPORTANT:
+        #
+        # repeat_weekly=True
+        #
+        # Kotlin AlarmReceiver will automatically schedule
+        # the next occurrence seven days later.
+        #
+        # Python does NOT reschedule fired alarms.
+        # --------------------------------------------------------
+
         FletAlarm().set_alarm(
             when,
             nt_id,
             title=title,
             message=message,
             speech_text=speech_text,
-            repeat_weekly=False,
+            repeat_weekly=True,
         )
 
         _log(
@@ -1521,6 +1349,12 @@ class SmartAlert:
                 f"Alarm cancellation unavailable: {err}"
             )
 
+        # --------------------------------------------------------
+        # Python notification cancellation is kept only as
+        # cleanup for notifications previously created by older
+        # versions of the app.
+        # --------------------------------------------------------
+
         try:
 
             Notification(
@@ -1532,8 +1366,12 @@ class SmartAlert:
         except Exception as err:
 
             _log(
-                f"notification-cancel ERROR id={nt_id}: {err}"
+                f"notification-cancel ERROR: {err}"
             )
+
+    # ============================================================
+    # TEST NOTIFICATION
+    # ============================================================
 
     @staticmethod
     def _build_notification(
@@ -1624,68 +1462,8 @@ class SmartAlert:
             return False
 
     # ============================================================
-    # CLASS DIALOG
+    # TOAST
     # ============================================================
-
-    def _show_class_dialog(
-        self,
-        day: str,
-        when: str,
-        subject: str,
-        grade: str,
-    ):
-
-        grade_line = (
-            f"\nGrade: {grade}"
-            if grade
-            else ""
-        )
-
-        try:
-
-            self.page.show_dialog(
-                ft.AlertDialog(
-                    title=ft.Text(
-                        "Time for Class!"
-                    ),
-                    content=ft.Text(
-                        f"It's {day} {when}.\n"
-                        f"Subject: {subject}"
-                        f"{grade_line}"
-                    ),
-                    actions=[
-                        ft.TextButton(
-                            "Dismiss",
-                            on_click=lambda _:
-                            self.close_dialog(),
-                        )
-                    ],
-                )
-            )
-
-        except Exception as err:
-
-            _log(
-                f"DIALOG: ERROR: {err}"
-            )
-
-    def close_dialog(
-        self,
-    ):
-
-        try:
-
-            self.page.pop_dialog()
-
-        except Exception:
-            pass
-
-        try:
-
-            self.page.update()
-
-        except Exception:
-            pass
 
     def _toast(
         self,
@@ -1715,615 +1493,6 @@ class SmartAlert:
             )
 
     # ============================================================
-    # ALARM TRIGGER HANDLING
-    # ============================================================
-
-    def _reschedule_next(
-        self,
-        alarm_id: int,
-    ):
-
-        records = self._load_records()
-
-        for r in records:
-
-            if r["id"] != alarm_id:
-                continue
-
-            # The alarm that just fired belongs to this week's
-            # occurrence. Move it exactly seven days forward.
-            next_class = (
-                r["class_time"]
-                + timedelta(days=7)
-            )
-
-            r["class_time"] = (
-                self._next_future(
-                    next_class
-                )
-            )
-
-            r["time"] = (
-                self._alarm_time(
-                    r["class_time"],
-                    r["reminder_before"],
-                )
-            )
-
-            try:
-
-                self._schedule_alarm(
-                    r["id"],
-                    r["time"],
-                    r["subject"],
-                    r["grade"],
-                    r.get(
-                        "speech",
-                        "",
-                    ),
-                )
-
-                self._save_records(
-                    records
-                )
-
-                _log(
-                    "alarm-reschedule: "
-                    f"id={alarm_id}; "
-                    f"next_class={r['class_time']}; "
-                    f"next_alarm={r['time']}"
-                )
-
-            except Exception as err:
-
-                _log(
-                    f"alarm-reschedule ERROR: {err}"
-                )
-
-            return
-
-    def _find_triggered(
-        self,
-        now: datetime,
-        alarm_id: int | None,
-    ):
-
-        records = self._load_records()
-
-        # First preference: exact alarm ID supplied by Android.
-        if alarm_id is not None:
-
-            for r in records:
-
-                if r["id"] == alarm_id:
-
-                    return r
-
-        # Fallback: compare weekday and minute.
-        now_key = now.strftime(
-            "%A %H:%M"
-        )
-
-        for r in records:
-
-            if (
-                r["time"].strftime(
-                    "%A %H:%M"
-                )
-                == now_key
-            ):
-
-                return r
-
-        # Second fallback: compare class time.
-        for r in records:
-
-            if (
-                r["class_time"].strftime(
-                    "%A %H:%M"
-                )
-                == now_key
-            ):
-
-                return r
-
-        return None
-
-    # ============================================================
-    # READ ANDROID ALARM INTENT
-    # ============================================================
-
-    async def check_for_alarm_intent(
-        self,
-    ):
-
-        # Only one alarm intent may be handled at a time.
-        if self._alarm_lock.locked():
-
-            return
-
-        async with self._alarm_lock:
-
-            try:
-
-                _log(
-                    "alarm-check: ENTERED"
-                )
-
-                from flet_alarm import (
-                    PythonActivity,
-                    cast,
-                )
-
-                if not PythonActivity:
-
-                    _log(
-                        "alarm-check: PythonActivity unavailable"
-                    )
-
-                    return
-
-                if (
-                    PythonActivity.mActivity
-                    is None
-                ):
-
-                    _log(
-                        "alarm-check: mActivity unavailable"
-                    )
-
-                    return
-
-                activity = cast(
-                    "android.app.Activity",
-                    PythonActivity.mActivity,
-                )
-
-                intent = activity.getIntent()
-
-                if intent is None:
-
-                    _log(
-                        "alarm-check: intent is None"
-                    )
-
-                    return
-
-                # ------------------------------------------------
-                # ACTION
-                # ------------------------------------------------
-
-                action = intent.getAction()
-
-                _log(
-                    f"alarm-check: action={action}"
-                )
-
-                # ------------------------------------------------
-                # NORMAL ALARM FLAG
-                # ------------------------------------------------
-
-                is_alarm = (
-                    intent.getBooleanExtra(
-                        "is_alarm_trigger",
-                        False,
-                    )
-                )
-
-                # ------------------------------------------------
-                # ALARM EXTRAS
-                # ------------------------------------------------
-
-                raw_alarm_id = (
-                    intent.getIntExtra(
-                        "alarm_id",
-                        0,
-                    )
-                )
-
-                raw_notification_id = (
-                    intent.getIntExtra(
-                        "notification_id",
-                        0,
-                    )
-                )
-
-                speech_extra = (
-                    intent.getStringExtra(
-                        "speech_text"
-                    )
-                )
-
-                scheduled_at = (
-                    intent.getLongExtra(
-                        "scheduled_at_ms",
-                        0,
-                    )
-                )
-
-                _log(
-                    "alarm-check: extras "
-                    f"alarm_id={raw_alarm_id}; "
-                    f"notification_id={raw_notification_id}; "
-                    f"speech={speech_extra!r}; "
-                    f"scheduled_at={scheduled_at}; "
-                    f"is_alarm={is_alarm}"
-                )
-
-                # ------------------------------------------------
-                # ACTION FALLBACK
-                # ------------------------------------------------
-
-                action_alarm_id = None
-
-                if (
-                    isinstance(
-                        action,
-                        str,
-                    )
-                    and action.startswith(
-                        self.ALARM_ACTION_PREFIX
-                    )
-                ):
-
-                    try:
-
-                        action_alarm_id = int(
-                            action.rsplit(
-                                "_",
-                                1,
-                            )[1]
-                        )
-
-                        is_alarm = True
-
-                        _log(
-                            "alarm-check: recovered alarm ID "
-                            f"from action={action_alarm_id}"
-                        )
-
-                    except (
-                        ValueError,
-                        IndexError,
-                    ):
-
-                        _log(
-                            "alarm-check: invalid alarm action"
-                        )
-
-                # ------------------------------------------------
-                # NO ALARM
-                # ------------------------------------------------
-
-                if not is_alarm:
-
-                    return
-
-                # ------------------------------------------------
-                # DETERMINE IDS
-                # ------------------------------------------------
-
-                alarm_id = raw_alarm_id
-
-                if (
-                    alarm_id == 0
-                    and action_alarm_id is not None
-                ):
-
-                    alarm_id = (
-                        action_alarm_id
-                    )
-
-                nt_id = (
-                    raw_notification_id
-                )
-
-                if nt_id == 0:
-
-                    nt_id = alarm_id
-
-                # ------------------------------------------------
-                # DUPLICATE PROTECTION
-                # ------------------------------------------------
-
-                # If Android did not supply scheduled_at_ms,
-                # use the current minute so repeated checks of
-                # the same activity intent do not fire repeatedly.
-                signature_time = (
-                    scheduled_at
-                    if scheduled_at
-                    else int(
-                        datetime.now().timestamp()
-                        // 60
-                    )
-                )
-
-                signature = (
-                    alarm_id,
-                    signature_time,
-                )
-
-                _log(
-                    "alarm-check: trigger "
-                    f"alarm_id={alarm_id}; "
-                    f"notification_id={nt_id}; "
-                    f"signature={signature}"
-                )
-
-                if (
-                    signature
-                    == self._last_alarm_signature
-                ):
-
-                    _log(
-                        "alarm-check: duplicate ignored"
-                    )
-
-                    return
-
-                # Mark BEFORE doing notification/TTS so the
-                # 1-second monitor cannot enter again.
-                self._last_alarm_signature = (
-                    signature
-                )
-
-                # ------------------------------------------------
-                # FIND SAVED RECORD
-                # ------------------------------------------------
-
-                now = datetime.now()
-
-                record = self._find_triggered(
-                    now,
-                    alarm_id,
-                )
-
-                # ------------------------------------------------
-                # BUILD NOTIFICATION
-                # ------------------------------------------------
-
-                if record:
-
-                    title = (
-                        "Class Starting: "
-                        f"{record['subject']}"
-                    )
-
-                    if record["grade"]:
-
-                        body = (
-                            f"Grade: "
-                            f"{record['grade']} "
-                            "is waiting for you."
-                        )
-
-                    else:
-
-                        body = (
-                            "Your lesson is starting."
-                        )
-
-                    nt_id = record["id"]
-
-                else:
-
-                    title = (
-                        intent.getStringExtra(
-                            "notification_title"
-                        )
-                        or "Class Reminder"
-                    )
-
-                    body = (
-                        intent.getStringExtra(
-                            "notification_body"
-                        )
-                        or "Check your timetable."
-                    )
-
-                # ------------------------------------------------
-                # SEND NOTIFICATION FIRST
-                # ------------------------------------------------
-
-                notification = (
-                    self._build_notification(
-                        nt_id,
-                        title,
-                        body,
-                        True,
-                    )
-                )
-
-                notification_sent = (
-                    self._send_notification(
-                        notification,
-                        body,
-                    )
-                )
-
-                _log(
-                    "alarm-check: notification "
-                    f"sent={notification_sent}"
-                )
-
-                # ------------------------------------------------
-                # BUILD SPEECH
-                # ------------------------------------------------
-
-                if record:
-
-                    spoken = (
-                        record.get(
-                            "speech",
-                            "",
-                        ).strip()
-                        or (
-                            record["subject"]
-                            + (
-                                f", {record['grade']}"
-                                if record["grade"]
-                                else ""
-                            )
-                            + ", starts now."
-                        )
-                    )
-
-                else:
-
-                    spoken = (
-                        speech_extra
-                        or body
-                    )
-
-                spoken = str(
-                    spoken
-                ).strip()
-
-                _log(
-                    f"alarm-check: speech={spoken!r}"
-                )
-
-                # ------------------------------------------------
-                # SPEAK
-                # ------------------------------------------------
-
-                try:
-
-                    success = (
-                        await self._speak_scheduled_alarm(
-                            spoken
-                        )
-                    )
-
-                    _log(
-                        "alarm-check: TTS "
-                        f"success={success}"
-                    )
-
-                except Exception as err:
-
-                    _log(
-                        f"alarm-check: TTS ERROR: {err}"
-                    )
-
-                # ------------------------------------------------
-                # SHOW DIALOG
-                # ------------------------------------------------
-
-                if record:
-
-                    ct = record[
-                        "class_time"
-                    ]
-
-                    self._show_class_dialog(
-                        ct.strftime(
-                            "%A"
-                        ),
-                        ct.strftime(
-                            "%H:%M"
-                        ),
-                        record[
-                            "subject"
-                        ],
-                        record[
-                            "grade"
-                        ],
-                    )
-
-                # ------------------------------------------------
-                # MOVE TO NEXT WEEK
-                # ------------------------------------------------
-
-                if record:
-
-                    self._reschedule_next(
-                        record["id"]
-                    )
-
-                elif alarm_id:
-
-                    self._reschedule_next(
-                        alarm_id
-                    )
-
-                # ------------------------------------------------
-                # REMOVE ALARM MARKERS
-                # ------------------------------------------------
-
-                for key in (
-                    "is_alarm_trigger",
-                    "alarm_id",
-                    "notification_id",
-                    "notification_title",
-                    "notification_body",
-                    "speech_text",
-                    "scheduled_at_ms",
-                    "wake_for_alarm",
-                ):
-
-                    try:
-
-                        intent.removeExtra(
-                            key
-                        )
-
-                    except Exception:
-                        pass
-
-                # Clear the action after processing.
-                try:
-
-                    intent.setAction(
-                        None
-                    )
-
-                except Exception:
-                    pass
-
-                _log(
-                    "alarm-check: handled successfully "
-                    f"id={alarm_id}"
-                )
-
-            except Exception as err:
-
-                _log(
-                    f"alarm-check: ERROR: {err}"
-                )
-
-                print(
-                    f"Intent check error: {err}"
-                )
-
-    async def monitor_alarm_intents(
-        self,
-    ):
-
-        """
-        Keep checking the current Android activity intent.
-
-        This is useful when the alarm opens/resumes the Python
-        activity rather than starting a completely new process.
-        """
-
-        while True:
-
-            try:
-
-                await self.check_for_alarm_intent()
-
-            except Exception as err:
-
-                _log(
-                    f"alarm-monitor ERROR: {err}"
-                )
-
-            await asyncio.sleep(
-                1
-            )
-
-    # ============================================================
     # RESTORE ALARMS
     # ============================================================
 
@@ -2332,7 +1501,15 @@ class SmartAlert:
     ):
 
         """
-        Restore all saved timetable alarms after app startup.
+        Restore native Android alarms when the Flet app starts.
+
+        This is NOT the alarm execution path.
+
+        Android AlarmManager + Kotlin AlarmReceiver handles
+        alarms while the application is closed.
+
+        Python only recreates alarms after the application
+        starts again.
         """
 
         try:
@@ -2351,8 +1528,7 @@ class SmartAlert:
 
             for r in records:
 
-                # Move old occurrences forward until they are
-                # in the future.
+                # Move the stored occurrence into the future.
                 class_time = (
                     self._next_future(
                         r["class_time"]
@@ -2412,7 +1588,8 @@ class SmartAlert:
                 )
 
             _log(
-                f"restore: completed {len(records)} alarms"
+                f"restore: completed "
+                f"{len(records)} alarms"
             )
 
         except Exception as err:
@@ -2433,10 +1610,6 @@ class SmartAlert:
         self,
     ):
 
-        """
-        Display the previous run's debug log.
-        """
-
         await asyncio.sleep(
             2
         )
@@ -2452,7 +1625,6 @@ class SmartAlert:
                 else ""
             )
 
-            # Start a fresh log for the current run.
             LOG_FILE.write_text(
                 "",
                 encoding="utf-8",
@@ -2499,6 +1671,28 @@ class SmartAlert:
             )
 
     # ============================================================
+    # DIALOG
+    # ============================================================
+
+    def close_dialog(
+        self,
+    ):
+
+        try:
+
+            self.page.pop_dialog()
+
+        except Exception:
+            pass
+
+        try:
+
+            self.page.update()
+
+        except Exception:
+            pass
+
+    # ============================================================
     # TEST NOTIFICATION + VOICE
     # ============================================================
 
@@ -2533,7 +1727,6 @@ class SmartAlert:
                 ok=sent,
             )
 
-            # Run voice test independently.
             asyncio.create_task(
                 self.test_voice()
             )
@@ -2554,7 +1747,9 @@ class SmartAlert:
     ):
 
         """
-        Test persistent native Android TTS.
+        Test Python/Flet TTS only.
+
+        Scheduled lesson alarms DO NOT use this function.
         """
 
         await asyncio.sleep(
@@ -2574,10 +1769,6 @@ class SmartAlert:
             )
 
             if ready:
-
-                _log(
-                    "test: TTS READY"
-                )
 
                 success = (
                     self._speak_alert(
@@ -2686,7 +1877,6 @@ class SmartAlert:
                 fph.Permission.SYSTEM_ALERT_WINDOW
             )
 
-            # Battery optimization permission.
             try:
 
                 await ph.request(
