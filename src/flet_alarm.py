@@ -14,7 +14,12 @@ try:
     Intent = autoclass("android.content.Intent")
     PendingIntent = autoclass("android.app.PendingIntent")
     AlarmManager = autoclass("android.app.AlarmManager")
-    PowerManager = autoclass("android.os.PowerManager")
+
+    # Native receiver created in:
+    # android/app/src/main/kotlin/org/digielimu/classalert/AlarmReceiver.kt
+    AlarmReceiver = autoclass(
+        "org.digielimu.classalert.AlarmReceiver"
+    )
 
     def get_python_activity():
         """
@@ -47,6 +52,7 @@ try:
             seen.add(name)
 
             try:
+
                 activity_class = autoclass(name)
 
                 print(
@@ -56,6 +62,7 @@ try:
                 return activity_class
 
             except Exception as e:
+
                 print(
                     f"FletAlarm: Could not load {name}: {e}"
                 )
@@ -76,6 +83,10 @@ try:
         "FletAlarm: Android alarm support enabled."
     )
 
+    print(
+        "FletAlarm: Native AlarmReceiver loaded."
+    )
+
 except Exception as e:
 
     print(
@@ -86,8 +97,9 @@ except Exception as e:
     Intent = None
     PendingIntent = None
     AlarmManager = None
-    PowerManager = None
+    AlarmReceiver = None
     PythonActivity = None
+
     IS_ANDROID = False
 
 
@@ -107,19 +119,35 @@ class FletAlarm:
             return
 
         if PythonActivity is None:
+
             print(
                 "FletAlarm: PythonActivity is unavailable."
             )
+
+            return
+
+        if AlarmReceiver is None:
+
+            print(
+                "FletAlarm: AlarmReceiver is unavailable."
+            )
+
             return
 
         try:
 
+            # ------------------------------------------------
+            # GET CURRENT FLET ACTIVITY
+            # ------------------------------------------------
+
             raw_activity = PythonActivity.mActivity
 
             if raw_activity is None:
+
                 print(
                     "FletAlarm: Android Activity is not ready."
                 )
+
                 return
 
             self.activity = cast(
@@ -127,23 +155,38 @@ class FletAlarm:
                 raw_activity,
             )
 
-            self.context = self.activity
+            # Activity is used only to obtain the Android
+            # application context. The alarm itself does NOT
+            # target the Activity anymore.
+            self.context = (
+                self.activity.getApplicationContext()
+            )
+
+            # ------------------------------------------------
+            # GET ALARM MANAGER
+            # ------------------------------------------------
 
             self.alarm_manager = cast(
                 "android.app.AlarmManager",
-                self.activity.getSystemService(
+                self.context.getSystemService(
                     Context.ALARM_SERVICE
                 ),
             )
 
             if self.alarm_manager is None:
+
                 print(
                     "FletAlarm: AlarmManager unavailable."
                 )
+
                 return
 
             print(
                 "FletAlarm: AlarmManager initialized."
+            )
+
+            print(
+                "FletAlarm: Using native AlarmReceiver."
             )
 
         except Exception as e:
@@ -169,8 +212,7 @@ class FletAlarm:
         # Android 12+ requires explicit mutability.
         #
         # The alarm Intent does not need to be modified by
-        # Android after the PendingIntent is created, so
-        # IMMUTABLE is appropriate.
+        # Android after the PendingIntent is created.
 
         flags = PendingIntent.FLAG_IMMUTABLE
 
@@ -186,7 +228,7 @@ class FletAlarm:
 
 
     # ========================================================
-    # INTENT CONFIGURATION
+    # PREPARE BROADCAST INTENT
     # ========================================================
 
     def _prepare_alarm_intent(
@@ -194,19 +236,14 @@ class FletAlarm:
         intent,
     ):
         """
-        Prepare the Flet Activity Intent used by AlarmManager.
+        Prepare the explicit BroadcastReceiver Intent.
 
-        The alarm should bring the existing Flet Activity to
-        the foreground instead of creating unnecessary Activity
-        instances.
+        IMPORTANT:
+        This is no longer an Activity Intent.
+
+        Android AlarmManager will deliver this Intent
+        directly to AlarmReceiver.kt.
         """
-
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK
-            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-            | Intent.FLAG_ACTIVITY_SINGLE_TOP
-            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-        )
 
         if self.context is not None:
 
@@ -260,20 +297,20 @@ class FletAlarm:
             return False
 
 
-        if self.activity is None:
+        if self.context is None:
 
             print(
-                f"CRITICAL: Activity unavailable "
+                f"CRITICAL: Android context unavailable "
                 f"for alarm {alarm_id}."
             )
 
             return False
 
 
-        if self.context is None:
+        if AlarmReceiver is None:
 
             print(
-                f"CRITICAL: Context unavailable "
+                f"CRITICAL: AlarmReceiver unavailable "
                 f"for alarm {alarm_id}."
             )
 
@@ -283,12 +320,12 @@ class FletAlarm:
         try:
 
             # ------------------------------------------------
-            # CREATE INTENT
+            # CREATE NATIVE BROADCAST INTENT
             # ------------------------------------------------
 
             intent = Intent(
                 self.context,
-                self.activity.getClass(),
+                AlarmReceiver,
             )
 
             self._prepare_alarm_intent(
@@ -329,42 +366,43 @@ class FletAlarm:
 
             extras.putInt(
                 "alarm_id",
-                alarm_id,
+                int(alarm_id),
             )
 
             extras.putInt(
                 "notification_id",
-                alarm_id,
+                int(alarm_id),
             )
 
             extras.putString(
                 "notification_title",
-                title,
+                str(title),
             )
 
             extras.putString(
                 "notification_body",
-                message,
+                str(message),
             )
 
             extras.putString(
                 "speech_text",
-                speech_text or message,
-            )
-
-            extras.putBoolean(
-                "is_alarm_trigger",
-                True,
+                str(
+                    speech_text
+                    or message
+                ),
             )
 
             extras.putLong(
                 "scheduled_at_ms",
-                trigger_at_ms,
+                int(trigger_at_ms),
             )
 
+            # Native AlarmReceiver.kt uses this to determine
+            # whether it should schedule the same alarm for
+            # the following week.
             extras.putBoolean(
-                "wake_for_alarm",
-                True,
+                "repeat_weekly",
+                bool(repeat_weekly),
             )
 
             intent.putExtras(
@@ -377,9 +415,9 @@ class FletAlarm:
             # ------------------------------------------------
 
             pending_intent = (
-                PendingIntent.getActivity(
+                PendingIntent.getBroadcast(
                     self.context,
-                    alarm_id,
+                    int(alarm_id),
                     intent,
                     self._build_pending_intent_flags(),
                 )
@@ -390,7 +428,8 @@ class FletAlarm:
 
                 print(
                     f"CRITICAL: Could not create "
-                    f"PendingIntent for alarm {alarm_id}."
+                    f"Broadcast PendingIntent for "
+                    f"alarm {alarm_id}."
                 )
 
                 return False
@@ -426,14 +465,27 @@ class FletAlarm:
             )
 
             print(
-                "FletAlarm: Android will wake the "
-                "application Activity at the alarm time."
+                f"FletAlarm: Repeat weekly = "
+                f"{repeat_weekly}"
             )
 
             print(
-                "FletAlarm: Activity flags = "
-                "NEW_TASK | CLEAR_TOP | SINGLE_TOP | "
-                "REORDER_TO_FRONT"
+                "FletAlarm: Target = "
+                "org.digielimu.classalert.AlarmReceiver"
+            )
+
+            print(
+                "FletAlarm: PendingIntent = "
+                "getBroadcast()"
+            )
+
+            print(
+                "FletAlarm: Alarm type = "
+                "RTC_WAKEUP"
+            )
+
+            print(
+                "FletAlarm: Exact + AllowWhileIdle = TRUE"
             )
 
             print(
@@ -442,42 +494,25 @@ class FletAlarm:
 
 
             # ------------------------------------------------
-            # SCHEDULE
+            # SCHEDULE EXACT ALARM
             # ------------------------------------------------
+            #
+            # We intentionally DO NOT use setRepeating().
+            #
+            # AlarmReceiver.kt handles the next-week
+            # scheduling when repeat_weekly=True.
+            #
 
-            if repeat_weekly:
+            self.alarm_manager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                trigger_at_ms,
+                pending_intent,
+            )
 
-                one_week_ms = (
-                    7 * 24 * 60 * 60 * 1000
-                )
-
-                self.alarm_manager.setRepeating(
-                    AlarmManager.RTC_WAKEUP,
-                    trigger_at_ms,
-                    one_week_ms,
-                    pending_intent,
-                )
-
-                print(
-                    f"FletAlarm: Weekly alarm "
-                    f"{alarm_id} scheduled."
-                )
-
-            else:
-
-                # Exact + wake from Doze.
-
-                self.alarm_manager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    trigger_at_ms,
-                    pending_intent,
-                )
-
-                print(
-                    f"FletAlarm: Exact wake-up alarm "
-                    f"{alarm_id} scheduled."
-                )
-
+            print(
+                f"FletAlarm: Exact native alarm "
+                f"{alarm_id} scheduled successfully."
+            )
 
             return True
 
@@ -522,20 +557,39 @@ class FletAlarm:
             return False
 
 
+        if self.context is None:
+
+            return False
+
+
+        if AlarmReceiver is None:
+
+            return False
+
+
         try:
 
-            # Create the exact same Intent identity used
-            # when the alarm was scheduled.
+            # ------------------------------------------------
+            # CREATE THE EXACT SAME BROADCAST INTENT
+            # ------------------------------------------------
+            #
+            # This is important because Android identifies
+            # PendingIntents by their Intent identity.
+            #
 
             intent = Intent(
                 self.context,
-                self.activity.getClass(),
+                AlarmReceiver,
             )
 
             self._prepare_alarm_intent(
                 intent
             )
 
+
+            # ------------------------------------------------
+            # SAME ACTION
+            # ------------------------------------------------
 
             action = (
                 f"com.zaimtech.CLASS_ALERT_ALARM_{alarm_id}"
@@ -546,10 +600,14 @@ class FletAlarm:
             )
 
 
+            # ------------------------------------------------
+            # FIND EXISTING BROADCAST PENDING INTENT
+            # ------------------------------------------------
+
             pending_intent = (
-                PendingIntent.getActivity(
+                PendingIntent.getBroadcast(
                     self.context,
-                    alarm_id,
+                    int(alarm_id),
                     intent,
                     self._build_pending_intent_flags(
                         include_no_create=True
@@ -571,8 +629,18 @@ class FletAlarm:
                     f"{alarm_id} cancelled."
                 )
 
+            else:
 
-            # Cancel associated notification as well.
+                print(
+                    f"FletAlarm: No existing "
+                    f"PendingIntent found for "
+                    f"alarm {alarm_id}."
+                )
+
+
+            # ------------------------------------------------
+            # CANCEL ASSOCIATED NOTIFICATION
+            # ------------------------------------------------
 
             try:
 
