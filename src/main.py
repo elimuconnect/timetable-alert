@@ -64,9 +64,6 @@ class SmartAlert:
 
         # ------------------------------------------------------------
         # TTS
-        # Keep ONE native Android TTS instance alive and reuse it
-        # for manual voice tests.
-        # Scheduled alarms use a fresh TTS instance.
         # ------------------------------------------------------------
         self._tts = None
         self._tts_initializing = False
@@ -253,10 +250,6 @@ class SmartAlert:
     async def _speak_scheduled_alarm(self, spoken: str):
         """
         Create a fresh Android TTS engine for a scheduled alarm.
-
-        The normal persistent TTS instance is intentionally not reused
-        here because an Android alarm may resume the application from
-        a different lifecycle state.
         """
         fresh_tts = None
 
@@ -296,7 +289,6 @@ class SmartAlert:
                 f"status={fresh_tts.status}"
             )
 
-            # Small delay after TTS initialization.
             await asyncio.sleep(0.3)
 
             success = fresh_tts.speak(spoken)
@@ -308,7 +300,6 @@ class SmartAlert:
             if not success:
                 return False
 
-            # Keep the TTS object alive while Android speaks.
             wait_seconds = max(
                 3.0,
                 min(12.0, 1.5 + len(spoken) / 12.0)
@@ -1055,6 +1046,13 @@ class SmartAlert:
     async def check_for_alarm_intent(self):
 
         try:
+            # --------------------------------------------------------
+            # NEW DEBUG MARKER
+            # --------------------------------------------------------
+            _log(
+                "alarm-check: ENTERED check_for_alarm_intent()"
+            )
+
             from flet_alarm import (
                 PythonActivity,
                 cast,
@@ -1106,6 +1104,17 @@ class SmartAlert:
             is_alarm = intent.getBooleanExtra(
                 "is_alarm_trigger",
                 False,
+            )
+
+            # --------------------------------------------------------
+            # NEW DEBUG: SHOW IMPORTANT ALARM EXTRAS
+            # --------------------------------------------------------
+
+            _log(
+                "alarm-check: alarm extras "
+                f"alarm_id={intent.getIntExtra('alarm_id', 0)}, "
+                f"speech={intent.getStringExtra('speech_text')}, "
+                f"scheduled={intent.getLongExtra('scheduled_at_ms', 0)}"
             )
 
             _log(
@@ -1173,8 +1182,6 @@ class SmartAlert:
                 0,
             )
 
-            # If extras were lost but action survived,
-            # use the ID recovered from the action.
             if (
                 alarm_id == 0
                 and action_alarm_id is not None
@@ -1345,20 +1352,29 @@ class SmartAlert:
             )
 
             # --------------------------------------------------------
-            # REMOVE TRIGGER MARKERS
+            # REMOVE ALL TRIGGER MARKERS
             # --------------------------------------------------------
 
             for key in (
                 "is_alarm_trigger",
+                "alarm_id",
                 "notification_id",
                 "notification_title",
                 "notification_body",
+                "speech_text",
+                "scheduled_at_ms",
+                "wake_for_alarm",
             ):
 
                 try:
                     intent.removeExtra(key)
                 except Exception:
                     pass
+
+            try:
+                intent.setAction(None)
+            except Exception:
+                pass
 
             _log(
                 f"alarm-check: alarm "
@@ -1540,7 +1556,6 @@ class SmartAlert:
                 "test: starting native TTS test"
             )
 
-            # Reuse the startup TTS instance.
             ready = await self._ensure_tts_ready()
 
             if ready:
