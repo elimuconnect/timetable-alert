@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -19,30 +20,98 @@ import java.util.Locale
 class AlarmReceiver : BroadcastReceiver() {
 
     companion object {
+
         const val ACTION_PREFIX =
             "com.zaimtech.CLASS_ALERT_ALARM_"
 
-        const val EXTRA_ALARM_ID = "alarm_id"
-        const val EXTRA_NOTIFICATION_ID = "notification_id"
-        const val EXTRA_NOTIFICATION_TITLE = "notification_title"
-        const val EXTRA_NOTIFICATION_BODY = "notification_body"
-        const val EXTRA_SPEECH_TEXT = "speech_text"
-        const val EXTRA_SCHEDULED_AT_MS = "scheduled_at_ms"
-        const val EXTRA_REPEAT_WEEKLY = "repeat_weekly"
+        const val EXTRA_ALARM_ID =
+            "alarm_id"
 
-        private const val CHANNEL_ID = "class_alert_alarms"
-        private const val CHANNEL_NAME = "Class Alert Alarms"
+        const val EXTRA_NOTIFICATION_ID =
+            "notification_id"
+
+        const val EXTRA_NOTIFICATION_TITLE =
+            "notification_title"
+
+        const val EXTRA_NOTIFICATION_BODY =
+            "notification_body"
+
+        const val EXTRA_SPEECH_TEXT =
+            "speech_text"
+
+        const val EXTRA_SCHEDULED_AT_MS =
+            "scheduled_at_ms"
+
+        const val EXTRA_REPEAT_WEEKLY =
+            "repeat_weekly"
+
+        private const val CHANNEL_ID =
+            "class_alert_alarms"
+
+        private const val CHANNEL_NAME =
+            "Class Alert Alarms"
+
+        private const val TAG =
+            "ClassAlertAlarm"
+
+        private const val WAKELOCK_TAG =
+            "ClassAlert:AlarmTTS"
+
+        private const val WAKELOCK_TIME =
+            30_000L
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
 
-        val action = intent.action ?: return
+    // ============================================================
+    // ALARM RECEIVED
+    // ============================================================
+
+    override fun onReceive(
+        context: Context,
+        intent: Intent
+    ) {
+
+        val action =
+            intent.action ?: return
 
         if (!action.startsWith(ACTION_PREFIX)) {
+
+            android.util.Log.d(
+                TAG,
+                "Ignoring unrelated action: $action"
+            )
+
             return
         }
 
-        val alarmId = intent.getIntExtra(EXTRA_ALARM_ID, 0)
+
+        // --------------------------------------------------------
+        // RECOVER ALARM ID
+        // --------------------------------------------------------
+
+        var alarmId =
+            intent.getIntExtra(
+                EXTRA_ALARM_ID,
+                0
+            )
+
+        if (alarmId == 0) {
+
+            try {
+
+                alarmId =
+                    action
+                        .substringAfterLast("_")
+                        .toInt()
+
+            } catch (_: Exception) {
+            }
+        }
+
+
+        // --------------------------------------------------------
+        // READ DATA
+        // --------------------------------------------------------
 
         val notificationId =
             intent.getIntExtra(
@@ -58,12 +127,15 @@ class AlarmReceiver : BroadcastReceiver() {
         val body =
             intent.getStringExtra(
                 EXTRA_NOTIFICATION_BODY
-            ) ?: "Lesson alert"
+            ) ?: "Your lesson is starting."
 
         val speech =
             intent.getStringExtra(
                 EXTRA_SPEECH_TEXT
-            ) ?: body
+            )
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: body
 
         val scheduledAt =
             intent.getLongExtra(
@@ -77,10 +149,61 @@ class AlarmReceiver : BroadcastReceiver() {
                 false
             )
 
+
         android.util.Log.d(
-            "ClassAlertAlarm",
-            "ALARM RECEIVED id=$alarmId speech=$speech"
+            TAG,
+            "================================================"
         )
+
+        android.util.Log.d(
+            TAG,
+            "ALARM RECEIVED"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "id=$alarmId"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "notificationId=$notificationId"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "title=$title"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "body=$body"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "speech=$speech"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "scheduledAt=$scheduledAt"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "repeatWeekly=$repeatWeekly"
+        )
+
+        android.util.Log.d(
+            TAG,
+            "================================================"
+        )
+
+
+        // --------------------------------------------------------
+        // SHOW NOTIFICATION IMMEDIATELY
+        // --------------------------------------------------------
 
         showNotification(
             context,
@@ -89,7 +212,13 @@ class AlarmReceiver : BroadcastReceiver() {
             body
         )
 
+
+        // --------------------------------------------------------
+        // WEEKLY RESCHEDULE
+        // --------------------------------------------------------
+
         if (repeatWeekly) {
+
             scheduleNextWeek(
                 context,
                 alarmId,
@@ -101,189 +230,446 @@ class AlarmReceiver : BroadcastReceiver() {
             )
         }
 
+
+        // --------------------------------------------------------
+        // SPEAK
+        // --------------------------------------------------------
+
         speak(
             context,
             speech
         )
     }
 
+
+    // ============================================================
+    // TEXT TO SPEECH
+    // ============================================================
+
     private fun speak(
         context: Context,
         text: String
     ) {
 
-        val wakeLockManager =
+        val speechText =
+            text.trim()
+
+        if (speechText.isEmpty()) {
+
+            android.util.Log.e(
+                TAG,
+                "TTS aborted: empty text"
+            )
+
+            return
+        }
+
+
+        android.util.Log.d(
+            TAG,
+            "Starting TTS: $speechText"
+        )
+
+
+        // --------------------------------------------------------
+        // WAKE LOCK
+        // --------------------------------------------------------
+
+        val powerManager =
             context.getSystemService(
                 Context.POWER_SERVICE
             ) as PowerManager
 
         val wakeLock =
-            wakeLockManager.newWakeLock(
+            powerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
-                "ClassAlert:AlarmTTS"
+                WAKELOCK_TAG
             )
 
+
         try {
-            wakeLock.acquire(15_000L)
+
+            wakeLock.acquire(
+                WAKELOCK_TIME
+            )
+
+            android.util.Log.d(
+                TAG,
+                "WakeLock acquired"
+            )
+
+        } catch (e: Exception) {
+
+            android.util.Log.e(
+                TAG,
+                "WakeLock acquisition failed",
+                e
+            )
+        }
+
+
+        // --------------------------------------------------------
+        // AUDIO MANAGER
+        // --------------------------------------------------------
+
+        try {
+
+            val audioManager =
+                context.getSystemService(
+                    Context.AUDIO_SERVICE
+                ) as AudioManager
+
+            android.util.Log.d(
+                TAG,
+                "Music volume=" +
+                        audioManager.getStreamVolume(
+                            AudioManager.STREAM_MUSIC
+                        )
+            )
+
+            android.util.Log.d(
+                TAG,
+                "Notification volume=" +
+                        audioManager.getStreamVolume(
+                            AudioManager.STREAM_NOTIFICATION
+                        )
+            )
+
+        } catch (e: Exception) {
+
+            android.util.Log.e(
+                TAG,
+                "Could not inspect audio volume",
+                e
+            )
+        }
+
+
+        // --------------------------------------------------------
+        // CREATE TTS
+        // --------------------------------------------------------
+
+        val tts =
+            TextToSpeech(
+                context.applicationContext
+            ) { status ->
+
+
+                android.util.Log.d(
+                    TAG,
+                    "TTS initialization status=$status"
+                )
+
+
+                if (
+                    status !=
+                    TextToSpeech.SUCCESS
+                ) {
+
+                    android.util.Log.e(
+                        TAG,
+                        "TTS initialization FAILED"
+                    )
+
+                    shutdownTts(
+                        tts,
+                        wakeLock
+                    )
+
+                    return@TextToSpeech
+                }
+
+
+                try {
+
+                    // ------------------------------------------------
+                    // SELECT LANGUAGE
+                    // ------------------------------------------------
+
+                    var languageResult =
+                        tts.setLanguage(
+                            Locale("en", "KE")
+                        )
+
+
+                    android.util.Log.d(
+                        TAG,
+                        "en-KE language result=$languageResult"
+                    )
+
+
+                    if (
+                        languageResult ==
+                        TextToSpeech.LANG_MISSING_DATA
+                        ||
+                        languageResult ==
+                        TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+
+                        android.util.Log.d(
+                            TAG,
+                            "en-KE unavailable, trying en-US"
+                        )
+
+                        languageResult =
+                            tts.setLanguage(
+                                Locale.US
+                            )
+                    }
+
+
+                    if (
+                        languageResult ==
+                        TextToSpeech.LANG_MISSING_DATA
+                        ||
+                        languageResult ==
+                        TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+
+                        android.util.Log.e(
+                            TAG,
+                            "No supported TTS language available"
+                        )
+
+                        shutdownTts(
+                            tts,
+                            wakeLock
+                        )
+
+                        return@TextToSpeech
+                    }
+
+
+                    // ------------------------------------------------
+                    // SPEECH SETTINGS
+                    // ------------------------------------------------
+
+                    tts.setSpeechRate(
+                        0.95f
+                    )
+
+                    tts.setPitch(
+                        1.0f
+                    )
+
+
+                    // ------------------------------------------------
+                    // AUDIO ATTRIBUTES
+                    // ------------------------------------------------
+
+                    if (
+                        Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.LOLLIPOP
+                    ) {
+
+                        tts.setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(
+                                    AudioAttributes.USAGE_ALARM
+                                )
+                                .setContentType(
+                                    AudioAttributes.CONTENT_TYPE_SPEECH
+                                )
+                                .build()
+                        )
+                    }
+
+
+                    // ------------------------------------------------
+                    // UTTERANCE CALLBACK
+                    // ------------------------------------------------
+
+                    tts.setOnUtteranceProgressListener(
+
+                        object :
+                            UtteranceProgressListener() {
+
+                            override fun onStart(
+                                utteranceId: String?
+                            ) {
+
+                                android.util.Log.d(
+                                    TAG,
+                                    "TTS STARTED: $utteranceId"
+                                )
+                            }
+
+
+                            override fun onDone(
+                                utteranceId: String?
+                            ) {
+
+                                android.util.Log.d(
+                                    TAG,
+                                    "TTS DONE: $utteranceId"
+                                )
+
+                                shutdownTts(
+                                    tts,
+                                    wakeLock
+                                )
+                            }
+
+
+                            override fun onError(
+                                utteranceId: String?
+                            ) {
+
+                                android.util.Log.e(
+                                    TAG,
+                                    "TTS ERROR: $utteranceId"
+                                )
+
+                                shutdownTts(
+                                    tts,
+                                    wakeLock
+                                )
+                            }
+
+
+                            override fun onError(
+                                utteranceId: String?,
+                                errorCode: Int
+                            ) {
+
+                                android.util.Log.e(
+                                    TAG,
+                                    "TTS ERROR code=$errorCode " +
+                                            "id=$utteranceId"
+                                )
+
+                                shutdownTts(
+                                    tts,
+                                    wakeLock
+                                )
+                            }
+                        }
+                    )
+
+
+                    // ------------------------------------------------
+                    // SPEAK
+                    // ------------------------------------------------
+
+                    val utteranceId =
+                        "class_alert_" +
+                                System.currentTimeMillis()
+
+
+                    val params =
+                        Bundle()
+
+
+                    if (
+                        Build.VERSION.SDK_INT >=
+                        Build.VERSION_CODES.LOLLIPOP
+                    ) {
+
+                        params.putString(
+                            TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
+                            utteranceId
+                        )
+                    }
+
+
+                    val result =
+                        tts.speak(
+                            speechText,
+                            TextToSpeech.QUEUE_FLUSH,
+                            params,
+                            utteranceId
+                        )
+
+
+                    android.util.Log.d(
+                        TAG,
+                        "tts.speak() result=$result"
+                    )
+
+
+                    if (
+                        result !=
+                        TextToSpeech.SUCCESS
+                    ) {
+
+                        android.util.Log.e(
+                            TAG,
+                            "tts.speak() FAILED"
+                        )
+
+                        shutdownTts(
+                            tts,
+                            wakeLock
+                        )
+                    }
+
+                } catch (e: Exception) {
+
+                    android.util.Log.e(
+                        TAG,
+                        "TTS processing exception",
+                        e
+                    )
+
+                    shutdownTts(
+                        tts,
+                        wakeLock
+                    )
+                }
+            }
+    }
+
+
+    // ============================================================
+    // SHUTDOWN TTS
+    // ============================================================
+
+    private fun shutdownTts(
+        tts: TextToSpeech?,
+        wakeLock: PowerManager.WakeLock
+    ) {
+
+        try {
+
+            tts?.stop()
+
         } catch (_: Exception) {
         }
 
-        val tts = TextToSpeech(
-            context.applicationContext
-        ) { status ->
 
-            if (status != TextToSpeech.SUCCESS) {
-                android.util.Log.e(
-                    "ClassAlertAlarm",
-                    "TTS initialization failed: $status"
-                )
+        try {
 
-                try {
-                    wakeLock.release()
-                } catch (_: Exception) {
-                }
+            tts?.shutdown()
 
-                return@TextToSpeech
-            }
+            android.util.Log.d(
+                TAG,
+                "TTS shutdown"
+            )
 
-            try {
+        } catch (_: Exception) {
+        }
 
-                val languageResult =
-                    tts.setLanguage(
-                        Locale("en", "KE")
-                    )
 
-                if (
-                    languageResult ==
-                    TextToSpeech.LANG_MISSING_DATA ||
-                    languageResult ==
-                    TextToSpeech.LANG_NOT_SUPPORTED
-                ) {
-                    tts.setLanguage(
-                        Locale.US
-                    )
-                }
+        try {
 
-                tts.setSpeechRate(0.95f)
+            if (wakeLock.isHeld) {
 
-                tts.setOnUtteranceProgressListener(
-                    object : UtteranceProgressListener() {
-
-                        override fun onStart(
-                            utteranceId: String?
-                        ) {
-                            android.util.Log.d(
-                                "ClassAlertAlarm",
-                                "TTS STARTED"
-                            )
-                        }
-
-                        override fun onDone(
-                            utteranceId: String?
-                        ) {
-                            android.util.Log.d(
-                                "ClassAlertAlarm",
-                                "TTS DONE"
-                            )
-
-                            try {
-                                tts.shutdown()
-                            } catch (_: Exception) {
-                            }
-
-                            try {
-                                wakeLock.release()
-                            } catch (_: Exception) {
-                            }
-                        }
-
-                        override fun onError(
-                            utteranceId: String?
-                        ) {
-                            android.util.Log.e(
-                                "ClassAlertAlarm",
-                                "TTS ERROR"
-                            )
-
-                            try {
-                                tts.shutdown()
-                            } catch (_: Exception) {
-                            }
-
-                            try {
-                                wakeLock.release()
-                            } catch (_: Exception) {
-                            }
-                        }
-
-                        override fun onError(
-                            utteranceId: String?,
-                            errorCode: Int
-                        ) {
-                            android.util.Log.e(
-                                "ClassAlertAlarm",
-                                "TTS ERROR code=$errorCode"
-                            )
-
-                            try {
-                                tts.shutdown()
-                            } catch (_: Exception) {
-                            }
-
-                            try {
-                                wakeLock.release()
-                            } catch (_: Exception) {
-                            }
-                        }
-                    }
-                )
-
-                val params = Bundle()
-
-                val result =
-                    tts.speak(
-                        text,
-                        TextToSpeech.QUEUE_FLUSH,
-                        params,
-                        "class_alert_${System.currentTimeMillis()}"
-                    )
+                wakeLock.release()
 
                 android.util.Log.d(
-                    "ClassAlertAlarm",
-                    "TTS speak result=$result"
+                    TAG,
+                    "WakeLock released"
                 )
-
-                if (
-                    result != TextToSpeech.SUCCESS
-                ) {
-                    tts.shutdown()
-
-                    try {
-                        wakeLock.release()
-                    } catch (_: Exception) {
-                    }
-                }
-
-            } catch (e: Exception) {
-
-                android.util.Log.e(
-                    "ClassAlertAlarm",
-                    "TTS exception",
-                    e
-                )
-
-                try {
-                    tts.shutdown()
-                } catch (_: Exception) {
-                }
-
-                try {
-                    wakeLock.release()
-                } catch (_: Exception) {
-                }
             }
+
+        } catch (_: Exception) {
         }
     }
+
+
+    // ============================================================
+    // NOTIFICATION
+    // ============================================================
 
     private fun showNotification(
         context: Context,
@@ -297,7 +683,15 @@ class AlarmReceiver : BroadcastReceiver() {
                 Context.NOTIFICATION_SERVICE
             ) as NotificationManager
 
-        if (Build.VERSION.SDK_INT >= 26) {
+
+        // --------------------------------------------------------
+        // CHANNEL
+        // --------------------------------------------------------
+
+        if (
+            Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.O
+        ) {
 
             val channel =
                 NotificationChannel(
@@ -306,37 +700,58 @@ class AlarmReceiver : BroadcastReceiver() {
                     NotificationManager.IMPORTANCE_HIGH
                 )
 
-            channel.description =
-                "Class timetable lesson alerts"
 
-            channel.enableVibration(true)
+            channel.description =
+                "Smart timetable lesson alerts"
+
+
+            channel.enableVibration(
+                true
+            )
+
 
             channel.setSound(
-                android.provider.Settings.System.DEFAULT_NOTIFICATION_URI,
+                android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI,
                 AudioAttributes.Builder()
                     .setUsage(
-                        AudioAttributes.USAGE_NOTIFICATION
+                        AudioAttributes.USAGE_ALARM
+                    )
+                    .setContentType(
+                        AudioAttributes.CONTENT_TYPE_SONIFICATION
                     )
                     .build()
             )
+
 
             manager.createNotificationChannel(
                 channel
             )
         }
 
+
+        // --------------------------------------------------------
+        // NOTIFICATION
+        // --------------------------------------------------------
+
         val notification =
-            if (Build.VERSION.SDK_INT >= 26) {
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.O
+            ) {
 
                 Notification.Builder(
                     context,
                     CHANNEL_ID
                 )
                     .setSmallIcon(
-                        android.R.drawable.ic_dialog_info
+                        android.R.drawable.ic_lock_idle_alarm
                     )
-                    .setContentTitle(title)
-                    .setContentText(body)
+                    .setContentTitle(
+                        title
+                    )
+                    .setContentText(
+                        body
+                    )
                     .setStyle(
                         Notification.BigTextStyle()
                             .bigText(body)
@@ -344,37 +759,70 @@ class AlarmReceiver : BroadcastReceiver() {
                     .setPriority(
                         Notification.PRIORITY_HIGH
                     )
-                    .setAutoCancel(true)
+                    .setCategory(
+                        Notification.CATEGORY_ALARM
+                    )
+                    .setAutoCancel(
+                        true
+                    )
+                    .setVisibility(
+                        Notification.VISIBILITY_PUBLIC
+                    )
                     .build()
 
             } else {
 
-                Notification.Builder(context)
+                Notification.Builder(
+                    context
+                )
                     .setSmallIcon(
-                        android.R.drawable.ic_dialog_info
+                        android.R.drawable.ic_lock_idle_alarm
                     )
-                    .setContentTitle(title)
-                    .setContentText(body)
+                    .setContentTitle(
+                        title
+                    )
+                    .setContentText(
+                        body
+                    )
                     .setPriority(
                         Notification.PRIORITY_HIGH
                     )
-                    .setAutoCancel(true)
+                    .setCategory(
+                        Notification.CATEGORY_ALARM
+                    )
+                    .setAutoCancel(
+                        true
+                    )
                     .build()
             }
 
+
         try {
+
             manager.notify(
                 notificationId,
                 notification
             )
+
+            android.util.Log.d(
+                TAG,
+                "Notification displayed: $notificationId"
+            )
+
         } catch (e: Exception) {
+
             android.util.Log.e(
-                "ClassAlertAlarm",
+                TAG,
                 "Notification error",
                 e
             )
         }
     }
+
+
+    // ============================================================
+    // SCHEDULE NEXT WEEK
+    // ============================================================
 
     private fun scheduleNextWeek(
         context: Context,
@@ -388,15 +836,25 @@ class AlarmReceiver : BroadcastReceiver() {
 
         val nextTime =
             scheduledAt +
-                    (7L * 24L * 60L * 60L * 1000L)
+                    (
+                        7L *
+                                24L *
+                                60L *
+                                60L *
+                                1000L
+                    )
+
 
         val alarmManager =
             context.getSystemService(
                 Context.ALARM_SERVICE
             ) as AlarmManager
 
+
         val action =
-            ACTION_PREFIX + alarmId
+            ACTION_PREFIX +
+                    alarmId
+
 
         val intent =
             Intent(
@@ -404,7 +862,8 @@ class AlarmReceiver : BroadcastReceiver() {
                 AlarmReceiver::class.java
             ).apply {
 
-                this.action = action
+                this.action =
+                    action
 
                 putExtra(
                     EXTRA_ALARM_ID,
@@ -442,9 +901,11 @@ class AlarmReceiver : BroadcastReceiver() {
                 )
             }
 
+
         val flags =
             PendingIntent.FLAG_UPDATE_CURRENT or
                     PendingIntent.FLAG_IMMUTABLE
+
 
         val pendingIntent =
             PendingIntent.getBroadcast(
@@ -454,23 +915,39 @@ class AlarmReceiver : BroadcastReceiver() {
                 flags
             )
 
+
         try {
 
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                nextTime,
-                pendingIntent
-            )
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.M
+            ) {
+
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    nextTime,
+                    pendingIntent
+                )
+
+            } else {
+
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    nextTime,
+                    pendingIntent
+                )
+            }
+
 
             android.util.Log.d(
-                "ClassAlertAlarm",
+                TAG,
                 "NEXT WEEK scheduled: $nextTime"
             )
 
         } catch (e: Exception) {
 
             android.util.Log.e(
-                "ClassAlertAlarm",
+                TAG,
                 "Could not schedule next week",
                 e
             )
