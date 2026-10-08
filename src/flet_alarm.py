@@ -72,7 +72,9 @@ try:
 
     IS_ANDROID = True
 
-    print("FletAlarm: Android alarm support enabled.")
+    print(
+        "FletAlarm: Android alarm support enabled."
+    )
 
 except Exception as e:
 
@@ -166,8 +168,9 @@ class FletAlarm:
 
         # Android 12+ requires explicit mutability.
         #
-        # We do not need to modify the Intent after Android
-        # receives the PendingIntent, so IMMUTABLE is safer.
+        # The alarm Intent does not need to be modified by
+        # Android after the PendingIntent is created, so
+        # IMMUTABLE is appropriate.
 
         flags = PendingIntent.FLAG_IMMUTABLE
 
@@ -190,28 +193,25 @@ class FletAlarm:
         self,
         intent,
     ):
+        """
+        Prepare the Flet Activity Intent used by AlarmManager.
 
-        # Make sure Android can launch the Activity when the
-        # alarm fires.
+        The alarm should bring the existing Flet Activity to
+        the foreground instead of creating unnecessary Activity
+        instances.
+        """
 
         intent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK
-        )
-
-        # If the Activity already exists, bring it to the
-        # front rather than creating unnecessary copies.
-
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_CLEAR_TOP
-        )
-
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_SINGLE_TOP
+            | Intent.FLAG_ACTIVITY_CLEAR_TOP
+            | Intent.FLAG_ACTIVITY_SINGLE_TOP
+            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
 
         if self.context is not None:
 
             try:
+
                 intent.setPackage(
                     self.context.getPackageName()
                 )
@@ -291,7 +291,9 @@ class FletAlarm:
                 self.activity.getClass(),
             )
 
-            self._prepare_alarm_intent(intent)
+            self._prepare_alarm_intent(
+                intent
+            )
 
 
             # ------------------------------------------------
@@ -302,7 +304,9 @@ class FletAlarm:
                 f"com.zaimtech.CLASS_ALERT_ALARM_{alarm_id}"
             )
 
-            intent.setAction(action)
+            intent.setAction(
+                action
+            )
 
 
             # ------------------------------------------------
@@ -363,7 +367,9 @@ class FletAlarm:
                 True,
             )
 
-            intent.putExtras(extras)
+            intent.putExtras(
+                extras
+            )
 
 
             # ------------------------------------------------
@@ -425,6 +431,12 @@ class FletAlarm:
             )
 
             print(
+                "FletAlarm: Activity flags = "
+                "NEW_TASK | CLEAR_TOP | SINGLE_TOP | "
+                "REORDER_TO_FRONT"
+            )
+
+            print(
                 "================================================"
             )
 
@@ -454,10 +466,6 @@ class FletAlarm:
             else:
 
                 # Exact + wake from Doze.
-                #
-                # This is important for timetable alerts:
-                # Android should wake the device/app around
-                # the scheduled time.
 
                 self.alarm_manager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
@@ -524,14 +532,18 @@ class FletAlarm:
                 self.activity.getClass(),
             )
 
-            self._prepare_alarm_intent(intent)
+            self._prepare_alarm_intent(
+                intent
+            )
 
 
             action = (
                 f"com.zaimtech.CLASS_ALERT_ALARM_{alarm_id}"
             )
 
-            intent.setAction(action)
+            intent.setAction(
+                action
+            )
 
 
             pending_intent = (
