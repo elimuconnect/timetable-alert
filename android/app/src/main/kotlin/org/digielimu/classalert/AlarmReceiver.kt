@@ -108,6 +108,16 @@ class AlarmReceiver : BroadcastReceiver() {
             }
         }
 
+        if (alarmId <= 0) {
+
+            android.util.Log.e(
+                TAG,
+                "Invalid alarm ID"
+            )
+
+            return
+        }
+
 
         // --------------------------------------------------------
         // READ DATA
@@ -202,7 +212,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
 
         // --------------------------------------------------------
-        // SHOW NOTIFICATION IMMEDIATELY
+        // SHOW NOTIFICATION
         // --------------------------------------------------------
 
         showNotification(
@@ -354,12 +364,10 @@ class AlarmReceiver : BroadcastReceiver() {
                 context.applicationContext
             ) { status ->
 
-
                 android.util.Log.d(
                     TAG,
                     "TTS initialization status=$status"
                 )
-
 
                 if (
                     status !=
@@ -383,14 +391,13 @@ class AlarmReceiver : BroadcastReceiver() {
                 try {
 
                     // ------------------------------------------------
-                    // SELECT LANGUAGE
+                    // LANGUAGE
                     // ------------------------------------------------
 
                     var languageResult =
                         tts.setLanguage(
                             Locale("en", "KE")
                         )
-
 
                     android.util.Log.d(
                         TAG,
@@ -555,21 +562,13 @@ class AlarmReceiver : BroadcastReceiver() {
                         "class_alert_" +
                                 System.currentTimeMillis()
 
-
                     val params =
                         Bundle()
 
-
-                    if (
-                        Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.LOLLIPOP
-                    ) {
-
-                        params.putString(
-                            TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
-                            utteranceId
-                        )
-                    }
+                    params.putString(
+                        TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
+                        utteranceId
+                    )
 
 
                     val result =
@@ -630,9 +629,7 @@ class AlarmReceiver : BroadcastReceiver() {
     ) {
 
         try {
-
             tts?.stop()
-
         } catch (_: Exception) {
         }
 
@@ -700,15 +697,12 @@ class AlarmReceiver : BroadcastReceiver() {
                     NotificationManager.IMPORTANCE_HIGH
                 )
 
-
             channel.description =
                 "Smart timetable lesson alerts"
-
 
             channel.enableVibration(
                 true
             )
-
 
             channel.setSound(
                 android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI,
@@ -721,7 +715,6 @@ class AlarmReceiver : BroadcastReceiver() {
                     )
                     .build()
             )
-
 
             manager.createNotificationChannel(
                 channel
@@ -792,6 +785,9 @@ class AlarmReceiver : BroadcastReceiver() {
                     )
                     .setAutoCancel(
                         true
+                    )
+                    .setVisibility(
+                        Notification.VISIBILITY_PUBLIC
                     )
                     .build()
             }
@@ -865,6 +861,10 @@ class AlarmReceiver : BroadcastReceiver() {
                 this.action =
                     action
 
+                setPackage(
+                    context.packageName
+                )
+
                 putExtra(
                     EXTRA_ALARM_ID,
                     alarmId
@@ -917,6 +917,26 @@ class AlarmReceiver : BroadcastReceiver() {
 
 
         try {
+
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.S
+            ) {
+
+                if (
+                    !alarmManager.canScheduleExactAlarms()
+                ) {
+
+                    android.util.Log.e(
+                        TAG,
+                        "Cannot schedule next week: " +
+                                "exact alarm permission unavailable"
+                    )
+
+                    return
+                }
+            }
+
 
             if (
                 Build.VERSION.SDK_INT >=
