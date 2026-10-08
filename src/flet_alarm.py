@@ -1,5 +1,6 @@
 import datetime
 import os
+import time
 
 from jnius import autoclass, cast
 
@@ -65,8 +66,11 @@ def _get_activity():
     """
     Find the currently running Android Activity.
 
-    Flet versions can expose the Activity through different
-    classes, so try the common locations.
+    The Activity is only required while scheduling/cancelling
+    alarms from the Flet application.
+
+    The native AlarmReceiver does NOT depend on the Activity
+    when an alarm fires.
     """
 
     candidates = (
@@ -77,7 +81,9 @@ def _get_activity():
     )
 
     for class_name in candidates:
+
         try:
+
             ActivityClass = autoclass(class_name)
 
             activity = getattr(
@@ -104,6 +110,7 @@ class FletAlarm:
     def __init__(self):
 
         if not ANDROID_AVAILABLE:
+
             raise RuntimeError(
                 f"Android classes unavailable: "
                 f"{_ANDROID_ERROR}"
@@ -112,11 +119,14 @@ class FletAlarm:
         self.activity = _get_activity()
 
         if self.activity is None:
+
             raise RuntimeError(
                 "Could not find the Android Activity."
             )
 
-        self.context = self.activity.getApplicationContext()
+        self.context = (
+            self.activity.getApplicationContext()
+        )
 
         self.alarm_manager = cast(
             "android.app.AlarmManager",
@@ -126,6 +136,7 @@ class FletAlarm:
         )
 
         if self.alarm_manager is None:
+
             raise RuntimeError(
                 "Android AlarmManager is unavailable."
             )
@@ -139,7 +150,8 @@ class FletAlarm:
         )
 
         _log(
-            f"initialized: package={self.package_name}, "
+            f"initialized: "
+            f"package={self.package_name}, "
             f"sdk={self.sdk}"
         )
 
@@ -149,8 +161,8 @@ class FletAlarm:
 
     def can_schedule_exact_alarms(self):
         """
-        Android 12+ may require the SCHEDULE_EXACT_ALARM
-        permission.
+        Android 12+ may require the
+        SCHEDULE_EXACT_ALARM permission.
         """
 
         try:
@@ -220,14 +232,19 @@ class FletAlarm:
 
         # Android 12+
         try:
+
             flags |= PendingIntent.FLAG_IMMUTABLE
+
         except Exception:
+
             pass
 
         if update:
+
             flags |= PendingIntent.FLAG_UPDATE_CURRENT
 
         if no_create:
+
             flags |= PendingIntent.FLAG_NO_CREATE
 
         return flags
@@ -243,7 +260,7 @@ class FletAlarm:
         message=None,
         speech_text=None,
         scheduled_at_ms=None,
-        repeat_weekly=False,
+        repeat_weekly=True,
     ):
 
         action = (
@@ -257,44 +274,79 @@ class FletAlarm:
 
         intent.setAction(action)
 
-        # Keep this explicit even though the receiver is explicit.
+        # Explicit package restriction.
         intent.setPackage(
             self.package_name
         )
+
+        # ----------------------------------------------------
+        # Alarm identity
+        # ----------------------------------------------------
 
         intent.putExtra(
             EXTRA_ALARM_ID,
             int(alarm_id),
         )
 
+        # ----------------------------------------------------
+        # Notification ID
+        # ----------------------------------------------------
+
         intent.putExtra(
             EXTRA_NOTIFICATION_ID,
             int(alarm_id),
         )
 
+        # ----------------------------------------------------
+        # Notification title
+        # ----------------------------------------------------
+
         if title is not None:
+
             intent.putExtra(
                 EXTRA_NOTIFICATION_TITLE,
                 str(title),
             )
 
+        # ----------------------------------------------------
+        # Notification body
+        # ----------------------------------------------------
+
         if message is not None:
+
             intent.putExtra(
                 EXTRA_NOTIFICATION_BODY,
                 str(message),
             )
 
+        # ----------------------------------------------------
+        # Native TTS text
+        # ----------------------------------------------------
+
         if speech_text is not None:
+
             intent.putExtra(
                 EXTRA_SPEECH_TEXT,
                 str(speech_text),
             )
 
+        # ----------------------------------------------------
+        # Original scheduled time
+        # ----------------------------------------------------
+
         if scheduled_at_ms is not None:
+
             intent.putExtra(
                 EXTRA_SCHEDULED_AT_MS,
                 int(scheduled_at_ms),
             )
+
+        # ----------------------------------------------------
+        # Native weekly repeat
+        #
+        # IMPORTANT:
+        # Kotlin AlarmReceiver owns weekly rescheduling.
+        # ----------------------------------------------------
 
         intent.putExtra(
             EXTRA_REPEAT_WEEKLY,
@@ -314,29 +366,50 @@ class FletAlarm:
         title="Class Reminder",
         message="Check your timetable.",
         speech_text="",
-        repeat_weekly=False,
+        repeat_weekly=True,
     ):
+        """
+        Schedule one exact Android alarm.
+
+        Weekly repetition is enabled by default.
+
+        After the alarm fires, Kotlin AlarmReceiver is
+        responsible for scheduling the same alarm again
+        seven days later.
+
+        Python does NOT need to receive the alarm.
+        """
 
         try:
+
+            # ------------------------------------------------
+            # Validate datetime
+            # ------------------------------------------------
 
             if not isinstance(
                 scheduled_time,
                 datetime.datetime,
             ):
+
                 raise TypeError(
                     "scheduled_time must be "
                     "a datetime.datetime"
                 )
 
+            # ------------------------------------------------
+            # Validate alarm ID
+            # ------------------------------------------------
+
             alarm_id = int(alarm_id)
 
             if alarm_id <= 0:
+
                 raise ValueError(
                     "alarm_id must be greater than zero"
                 )
 
             # ------------------------------------------------
-            # Convert Python datetime -> epoch milliseconds
+            # Convert datetime -> epoch milliseconds
             # ------------------------------------------------
 
             trigger_ms = int(
@@ -344,10 +417,11 @@ class FletAlarm:
             )
 
             now_ms = int(
-                __import__("time").time() * 1000
+                time.time() * 1000
             )
 
             if trigger_ms <= now_ms:
+
                 raise ValueError(
                     f"Alarm time is in the past: "
                     f"{scheduled_time}"
@@ -361,11 +435,13 @@ class FletAlarm:
 
                 raise PermissionError(
                     "SCHEDULE_EXACT_ALARM permission "
-                    "is not available."
+                    "is not available. "
+                    "Please enable exact alarms for "
+                    "this application."
                 )
 
             # ------------------------------------------------
-            # Build explicit BroadcastReceiver intent
+            # Build explicit receiver intent
             # ------------------------------------------------
 
             intent = self._build_intent(
@@ -376,6 +452,10 @@ class FletAlarm:
                 scheduled_at_ms=trigger_ms,
                 repeat_weekly=repeat_weekly,
             )
+
+            # ------------------------------------------------
+            # PendingIntent
+            # ------------------------------------------------
 
             flags = self._pending_intent_flags(
                 update=True
@@ -391,21 +471,28 @@ class FletAlarm:
             )
 
             if pending_intent is None:
+
                 raise RuntimeError(
                     "PendingIntent.getBroadcast() "
                     "returned None."
                 )
 
             # ------------------------------------------------
-            # Cancel previous alarm with same identity
+            # Cancel previous alarm with same ID
             # ------------------------------------------------
 
             try:
+
                 self.alarm_manager.cancel(
                     pending_intent
                 )
-            except Exception:
-                pass
+
+            except Exception as exc:
+
+                _log(
+                    f"previous alarm cancellation "
+                    f"warning: {exc}"
+                )
 
             # ------------------------------------------------
             # Schedule exact alarm
@@ -427,12 +514,17 @@ class FletAlarm:
                     pending_intent,
                 )
 
+            # ------------------------------------------------
+            # Logging
+            # ------------------------------------------------
+
             _log(
                 f"scheduled alarm: "
                 f"id={alarm_id}, "
                 f"time={scheduled_time}, "
                 f"epoch={trigger_ms}, "
-                f"repeat={repeat_weekly}"
+                f"repeat_weekly={repeat_weekly}, "
+                f"title={title}"
             )
 
             return True
@@ -460,6 +552,10 @@ class FletAlarm:
 
         try:
 
+            # ------------------------------------------------
+            # Recreate the same PendingIntent identity
+            # ------------------------------------------------
+
             intent = self._build_intent(
                 alarm_id=alarm_id
             )
@@ -484,8 +580,11 @@ class FletAlarm:
                 )
 
                 try:
+
                     pending_intent.cancel()
+
                 except Exception:
+
                     pass
 
                 _log(
@@ -499,9 +598,9 @@ class FletAlarm:
                     f"for alarm id={alarm_id}"
                 )
 
-            # --------------------------------------------
-            # Also cancel native notification
-            # --------------------------------------------
+            # ------------------------------------------------
+            # Cancel native notification
+            # ------------------------------------------------
 
             try:
 
@@ -513,6 +612,7 @@ class FletAlarm:
                 )
 
                 if manager is not None:
+
                     manager.cancel(
                         alarm_id
                     )
@@ -520,7 +620,8 @@ class FletAlarm:
             except Exception as exc:
 
                 _log(
-                    f"notification cancellation failed: {exc}"
+                    f"notification cancellation failed: "
+                    f"{exc}"
                 )
 
             return True
@@ -551,6 +652,7 @@ class FletAlarm:
             if not self.cancel_alarm(
                 alarm_id
             ):
+
                 success = False
 
         return success
