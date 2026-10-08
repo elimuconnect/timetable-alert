@@ -306,7 +306,13 @@ class SmartAlert:
 
         for r in records:
             try:
-                self._schedule_alarm(r["id"], r["time"], r["subject"], r["grade"])
+                self._schedule_alarm(
+                    r["id"],
+                    r["time"],
+                    r["subject"],
+                    r["grade"],
+                    r.get("speech", ""),
+                )
             except Exception as err:
                 print(f"Alarm scheduling unavailable: {err}")
         return len(records), skipped
@@ -435,15 +441,48 @@ class SmartAlert:
                 )
 
     # ---------------- Alarms / notifications ----------------
-    def _schedule_alarm(self, nt_id: int, when: datetime, subject: str, grade: str):
+    def _schedule_alarm(
+        self,
+        nt_id: int,
+        when: datetime,
+        subject: str,
+        grade: str,
+        speech: str = "",
+    ):
         from flet_alarm import FletAlarm
 
         suffix = f" for {grade}" if grade else ""
+
+        speech_text = str(speech or "").strip()
+
+        if not speech_text:
+            speech_text = (
+                f"{subject}"
+                + (f", {grade}" if grade else "")
+                + ", class starts now."
+            )
+
+        title = (
+            f"Class Starting: {subject}"
+            + (f", grade {grade}" if grade else "")
+        )
+
+        message = (
+            f"Your {subject} class{suffix} is ready."
+        )
+
+        _log(
+            f"alarm-schedule: id={nt_id}, "
+            f"time={when}, "
+            f"speech={speech_text!r}"
+        )
+
         FletAlarm().set_alarm(
             when,
             nt_id,
-            title=f"Class Starting: {subject}" + (f", grade {grade}" if grade else ""),
-            message=f"Your {subject} class{suffix} is ready.",
+            title=title,
+            message=message,
+            speech_text=speech_text,
             repeat_weekly=False,
         )
 
@@ -510,7 +549,13 @@ class SmartAlert:
                 continue
             r["class_time"] = self._next_future(r["class_time"] + timedelta(days=7))
             r["time"] = self._alarm_time(r["class_time"], r["reminder_before"])
-            self._schedule_alarm(r["id"], r["time"], r["subject"], r["grade"])
+            self._schedule_alarm(
+                r["id"],
+                r["time"],
+                r["subject"],
+                r["grade"],
+                r.get("speech", ""),
+            )
             self._save_records(records)
             return
 
@@ -851,7 +896,8 @@ class SmartAlert:
                         r["id"],
                         alarm,
                         r["subject"],
-                        r["grade"]
+                        r["grade"],
+                        r.get("speech", ""),
                     )
                 except Exception as err:
                     print(f"Alarm restore unavailable: {err}")
