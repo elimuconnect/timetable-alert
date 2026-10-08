@@ -7,38 +7,42 @@ on:
 
 env:
   UV_PYTHON: "3.12"
-  # Python version bundled INTO the app (Flet defaults to 3.14 otherwise)
   SERIOUS_PYTHON_VERSION: "3.12"
   PYTHONUTF8: 1
-
-  # https://flet.dev/docs/reference/environment-variables
   FLET_CLI_NO_RICH_OUTPUT: 1
 
 jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Debugging: only APK is enabled. Uncomment others one at a time
-          # after the APK build is green.
 
-          # -------- Android --------
+          # ==========================================================
+          # ANDROID APK
+          # ==========================================================
           - name: apk
             runner: ubuntu-latest
             build_cmd: "flet build apk"
             artifact_path: build/apk
             needs_linux_deps: false
 
+          # ==========================================================
+          # ANDROID AAB
+          # Uncomment after APK build is confirmed working.
+          # ==========================================================
           # - name: aab
           #   runner: ubuntu-latest
           #   build_cmd: "flet build aab"
           #   artifact_path: build/aab
           #   needs_linux_deps: false
 
-          # -------- Desktop --------
+          # ==========================================================
+          # DESKTOP
+          # ==========================================================
           # - name: linux
           #   runner: ubuntu-latest
           #   build_cmd: "flet build linux"
@@ -57,7 +61,9 @@ jobs:
           #   artifact_path: build/windows
           #   needs_linux_deps: false
 
-          # -------- iOS --------
+          # ==========================================================
+          # IOS
+          # ==========================================================
           # - name: ipa
           #   runner: macos-26
           #   build_cmd: "flet build ipa"
@@ -70,7 +76,9 @@ jobs:
           #   artifact_path: build/ios-simulator
           #   needs_linux_deps: false
 
-          # -------- Web --------
+          # ==========================================================
+          # WEB
+          # ==========================================================
           # - name: web
           #   runner: ubuntu-latest
           #   build_cmd: "flet build web"
@@ -78,35 +86,136 @@ jobs:
           #   needs_linux_deps: false
 
     steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ============================================================
+      # UV
+      # ============================================================
       - name: Setup uv
         uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
 
+      # ============================================================
+      # VERIFY PYTHON
+      # ============================================================
+      - name: Verify Python version
+        shell: bash
+        run: |
+          python3 --version
+          uv python --version
+          uv run python --version
+
+      # ============================================================
+      # LINUX DEPENDENCIES
+      # ============================================================
       - name: Install Linux dependencies
         if: matrix.needs_linux_deps
         shell: bash
         run: |
           sudo apt update --allow-releaseinfo-change
+
           LINUX_DEPS="$(uv run flet --version --json | jq -r '.linux_dependencies | join(" ")')"
-          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+
+          if [ -n "$LINUX_DEPS" ]; then
+            sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+          fi
+
           sudo apt-get clean
 
+      # ============================================================
+      # ANDROID LICENSES
+      # ============================================================
       - name: Accept Android licenses
         if: matrix.name == 'apk' || matrix.name == 'aab'
         shell: bash
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
+      # ============================================================
+      # CHECK PROJECT STRUCTURE
+      # ============================================================
+      - name: Check project files
+        shell: bash
+        run: |
+          echo "Project files:"
+          find . -maxdepth 2 -type f \
+            \( -name "*.py" -o -name "*.html" -o -name "*.json" -o -name "*.yaml" -o -name "*.yml" \) \
+            | sort
+
+      # ============================================================
+      # PYTHON COMPILE CHECK
+      # Supports src/ projects and root main.py projects.
+      # ============================================================
       - name: Check Python sources compile
         shell: bash
-        run: python3 -m compileall -q src
+        run: |
+          if [ -d "src" ]; then
+            python3 -m compileall -q src
+          fi
 
+          if find . -maxdepth 1 -name "*.py" | grep -q .; then
+            python3 -m compileall -q .
+          fi
+
+      # ============================================================
+      # VERIFY IMPORTANT APP FILES
+      # ============================================================
+      - name: Verify timetable app files
+        shell: bash
+        run: |
+          test -f index.html || {
+            echo "ERROR: index.html not found"
+            exit 1
+          }
+
+          test -d assets || {
+            echo "ERROR: assets directory not found"
+            exit 1
+          }
+
+          if [ -f "main.py" ]; then
+            echo "Found main.py"
+          elif [ -d "src" ]; then
+            echo "Using src project structure"
+          else
+            echo "WARNING: main.py not found at repository root"
+          fi
+
+          if find assets -type f -iname "alarmsound.mp3" | grep -q .; then
+            echo "Found alarmsound.mp3"
+          else
+            echo "WARNING: assets/alarmsound.mp3 not found"
+          fi
+
+      # ============================================================
+      # BUILD
+      #
+      # --yes allows Flet to install required build dependencies.
+      # --verbose keeps Android/Flet build diagnostics visible.
+      # ============================================================
       - name: Build app
         shell: bash
         run: |
           uv run ${{ matrix.build_cmd }} --yes --verbose
 
+      # ============================================================
+      # SHOW BUILD OUTPUT
+      # ============================================================
+      - name: Show build output
+        shell: bash
+        run: |
+          echo "Build directory:"
+          find build -maxdepth 3 -type f -print | sort || true
+
+      # ============================================================
+      # UPLOAD APK / BUILD ARTIFACT
+      # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v5.0.0
         with:
