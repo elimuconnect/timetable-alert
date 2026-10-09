@@ -1,94 +1,68 @@
-import datetime
-import os
 
-from android_notify import Notification
+import datetime
+import time
+import traceback
+
 from jnius import autoclass, cast
 
 
 # ============================================================
-# ANDROID CLASSES
+# CONSTANTS
 # ============================================================
 
-try:
-    Context = autoclass("android.content.Context")
-    Intent = autoclass("android.content.Intent")
-    PendingIntent = autoclass("android.app.PendingIntent")
-    AlarmManager = autoclass("android.app.AlarmManager")
-    PowerManager = autoclass("android.os.PowerManager")
+RECEIVER_CLASS = "org.digielimu.classalert.AlarmReceiver"
+ACTION_PREFIX = "com.zaimtech.CLASS_ALERT_ALARM_"
 
-    def get_python_activity():
-        """
-        Find the Android Activity used by the Flet application.
-        """
-
-        activity_names = [
-            os.getenv(
-                "MAIN_ACTIVITY_HOST_CLASS_NAME",
-                "",
-            ),
-
-            "org.flet.app.FletActivity",
-
-            "org.kivy.android.PythonActivity",
-
-            "org.renpy.android.PythonActivity",
-        ]
-
-        seen = set()
-
-        for name in activity_names:
-
-            if not name:
-                continue
-
-            if name in seen:
-                continue
-
-            seen.add(name)
-
-            try:
-                activity_class = autoclass(name)
-
-                print(
-                    f"FletAlarm: Found Android activity: {name}"
-                )
-
-                return activity_class
-
-            except Exception as e:
-                print(
-                    f"FletAlarm: Could not load {name}: {e}"
-                )
-
-        return None
+EXTRA_ALARM_ID = "alarm_id"
+EXTRA_NOTIFICATION_ID = "notification_id"
+EXTRA_NOTIFICATION_TITLE = "notification_title"
+EXTRA_NOTIFICATION_BODY = "notification_body"
+EXTRA_SPEECH_TEXT = "speech_text"
+EXTRA_SCHEDULED_AT_MS = "scheduled_at_ms"
+EXTRA_REPEAT_WEEKLY = "repeat_weekly"
 
 
-    PythonActivity = get_python_activity()
+# ============================================================
+# LOGGING
+# ============================================================
 
-    if PythonActivity is None:
+def _log(message):
+    try:
+        print(f"[FletAlarm] {message}", flush=True)
+    except Exception:
+        pass
+
+
+def _log_exception(label, exc):
+    _log(f"{label}: {type(exc).__name__}: {exc}")
+    try:
+        _log(traceback.format_exc())
+    except Exception:
+        pass
+
+
+# ============================================================
+# ANDROID APPLICATION CONTEXT
+# ============================================================
+
+def _get_application_context():
+    """Obtain the Android application context."""
+    ActivityThread = autoclass("android.app.ActivityThread")
+    application = ActivityThread.currentApplication()
+
+    if application is None:
         raise RuntimeError(
-            "No compatible Android Activity class found."
+            "Android currentApplication() returned None."
         )
 
-    IS_ANDROID = True
+    context = application.getApplicationContext()
 
-    print(
-        "FletAlarm: Android alarm support enabled."
-    )
+    if context is None:
+        raise RuntimeError(
+            "Android returned a null application context."
+        )
 
-except Exception as e:
-
-    print(
-        f"FletAlarm: Android initialization failed: {e}"
-    )
-
-    Context = None
-    Intent = None
-    PendingIntent = None
-    AlarmManager = None
-    PowerManager = None
-    PythonActivity = None
-    IS_ANDROID = False
+    return cast("android.content.Context", context)
 
 
 # ============================================================
@@ -96,504 +70,305 @@ except Exception as e:
 # ============================================================
 
 class FletAlarm:
-
     def __init__(self):
-
-        self.activity = None
-        self.context = None
-        self.alarm_manager = None
-
-        if not IS_ANDROID:
-            return
-
-        if PythonActivity is None:
-            print(
-                "FletAlarm: PythonActivity is unavailable."
-            )
-            return
-
         try:
+            _log("Initializing Android alarm services...")
 
-            raw_activity = PythonActivity.mActivity
+            # Load Build.VERSION as its own Java nested class.
+            self.VERSION = autoclass("android.os.Build$VERSION")
+            self.sdk = int(self.VERSION.SDK_INT)
+            _log(f"Android SDK loaded: {self.sdk}")
 
-            if raw_activity is None:
-                print(
-                    "FletAlarm: Android Activity is not ready."
-                )
-                return
-
-            self.activity = cast(
-                "android.app.Activity",
-                raw_activity,
+            self.Context = autoclass("android.content.Context")
+            self.Intent = autoclass("android.content.Intent")
+            self.PendingIntent = autoclass("android.app.PendingIntent")
+            self.AlarmManager = autoclass("android.app.AlarmManager")
+            self.Settings = autoclass("android.provider.Settings")
+            self.Uri = autoclass("android.net.Uri")
+            self.NotificationManager = autoclass(
+                "android.app.NotificationManager"
             )
 
-            self.context = self.activity
+            _log("Android framework classes loaded")
+
+            self.context = _get_application_context()
+            self.package_name = str(self.context.getPackageName())
+
+            service = self.context.getSystemService(
+                self.Context.ALARM_SERVICE
+            )
+
+            if service is None:
+                raise RuntimeError(
+                    "Android AlarmManager service is unavailable."
+                )
 
             self.alarm_manager = cast(
                 "android.app.AlarmManager",
-                self.activity.getSystemService(
-                    Context.ALARM_SERVICE
-                ),
+                service,
             )
 
-            if self.alarm_manager is None:
-                print(
-                    "FletAlarm: AlarmManager unavailable."
-                )
-                return
-
-            print(
-                "FletAlarm: AlarmManager initialized."
+            _log(
+                f"Initialized successfully; "
+                f"package={self.package_name}; sdk={self.sdk}"
             )
 
-        except Exception as e:
+        except Exception as exc:
+            _log_exception("INITIALIZATION FAILED", exc)
+            raise
 
-            print(
-                f"FletAlarm: Initialization error: {e}"
+    # ========================================================
+    # EXACT ALARM PERMISSION
+    # ========================================================
+
+    def can_schedule_exact_alarms(self):
+        if self.sdk < 31:
+            return True
+
+        try:
+            return bool(
+                self.alarm_manager.canScheduleExactAlarms()
             )
+        except Exception as exc:
+            _log_exception("Exact alarm permission check failed", exc)
+            return False
 
-            self.activity = None
-            self.context = None
-            self.alarm_manager = None
+    def open_exact_alarm_settings(self):
+        if self.sdk < 31:
+            return True
 
+        try:
+            intent = self.Intent(
+                self.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
+            )
+            intent.setData(
+                self.Uri.parse(f"package:{self.package_name}")
+            )
+            intent.addFlags(
+                int(self.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            self.context.startActivity(intent)
+
+            _log("Opened exact alarm settings")
+            return True
+
+        except Exception as exc:
+            _log_exception("Could not open exact alarm settings", exc)
+            return False
 
     # ========================================================
     # PENDING INTENT FLAGS
     # ========================================================
 
-    def _build_pending_intent_flags(
-        self,
-        include_no_create=False,
-    ):
+    def _pending_intent_flags(self, update=False, no_create=False):
+        flags = 0
 
-        # Android 12+ requires explicit mutability.
-        #
-        # The alarm Intent does not need to be modified by
-        # Android after the PendingIntent is created, so
-        # IMMUTABLE is appropriate.
+        if self.sdk >= 23:
+            flags |= int(self.PendingIntent.FLAG_IMMUTABLE)
 
-        flags = PendingIntent.FLAG_IMMUTABLE
+        if update:
+            flags |= int(self.PendingIntent.FLAG_UPDATE_CURRENT)
 
-        if include_no_create:
-
-            flags |= PendingIntent.FLAG_NO_CREATE
-
-        else:
-
-            flags |= PendingIntent.FLAG_UPDATE_CURRENT
+        if no_create:
+            flags |= int(self.PendingIntent.FLAG_NO_CREATE)
 
         return flags
 
-
     # ========================================================
-    # INTENT CONFIGURATION
+    # BUILD RECEIVER INTENT
     # ========================================================
 
-    def _prepare_alarm_intent(
+    def _build_intent(
         self,
-        intent,
+        alarm_id,
+        title=None,
+        message=None,
+        speech_text=None,
+        scheduled_at_ms=None,
+        repeat_weekly=True,
     ):
-        """
-        Prepare the Flet Activity Intent used by AlarmManager.
+        alarm_id = int(alarm_id)
+        intent = self.Intent()
 
-        The alarm should bring the existing Flet Activity to
-        the foreground instead of creating unnecessary Activity
-        instances.
-        """
+        intent.setClassName(self.context, RECEIVER_CLASS)
+        intent.setAction(f"{ACTION_PREFIX}{alarm_id}")
 
-        intent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK
-            | Intent.FLAG_ACTIVITY_CLEAR_TOP
-            | Intent.FLAG_ACTIVITY_SINGLE_TOP
-            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-        )
+        intent.putExtra(EXTRA_ALARM_ID, alarm_id)
+        intent.putExtra(EXTRA_NOTIFICATION_ID, alarm_id)
 
-        if self.context is not None:
+        if title is not None:
+            intent.putExtra(EXTRA_NOTIFICATION_TITLE, str(title))
 
-            try:
+        if message is not None:
+            intent.putExtra(EXTRA_NOTIFICATION_BODY, str(message))
 
-                intent.setPackage(
-                    self.context.getPackageName()
-                )
+        if speech_text is not None:
+            intent.putExtra(EXTRA_SPEECH_TEXT, str(speech_text))
 
-            except Exception as e:
+        if scheduled_at_ms is not None:
+            intent.putExtra(
+                EXTRA_SCHEDULED_AT_MS,
+                int(scheduled_at_ms),
+            )
 
-                print(
-                    f"FletAlarm: Could not set package: {e}"
-                )
-
+        intent.putExtra(EXTRA_REPEAT_WEEKLY, bool(repeat_weekly))
         return intent
 
+    def _get_pending_intent(
+        self,
+        alarm_id,
+        update=False,
+        no_create=False,
+        title=None,
+        message=None,
+        speech_text=None,
+        scheduled_at_ms=None,
+        repeat_weekly=True,
+    ):
+        intent = self._build_intent(
+            alarm_id=alarm_id,
+            title=title,
+            message=message,
+            speech_text=speech_text,
+            scheduled_at_ms=scheduled_at_ms,
+            repeat_weekly=repeat_weekly,
+        )
+
+        return self.PendingIntent.getBroadcast(
+            self.context,
+            int(alarm_id),
+            intent,
+            self._pending_intent_flags(
+                update=update,
+                no_create=no_create,
+            ),
+        )
 
     # ========================================================
-    # SET ALARM
+    # SCHEDULE ALARM
     # ========================================================
 
     def set_alarm(
         self,
-        schld_time: datetime.datetime,
-        alarm_id: int,
-        title: str = "Alarm",
-        message: str = "Alarm triggered!",
-        speech_text: str = "",
-        repeat_weekly: bool = False,
+        scheduled_time,
+        alarm_id,
+        title="Class Reminder",
+        message="Check your timetable.",
+        speech_text="",
+        repeat_weekly=True,
     ):
-
-        if not IS_ANDROID:
-
-            print(
-                f"DEBUG: Android unavailable. "
-                f"Alarm {alarm_id} would be set for "
-                f"{schld_time}"
+        if not isinstance(scheduled_time, datetime.datetime):
+            raise TypeError(
+                "scheduled_time must be datetime.datetime"
             )
 
-            return False
+        alarm_id = int(alarm_id)
+        if alarm_id <= 0:
+            raise ValueError("alarm_id must be greater than zero.")
 
+        trigger_ms = int(scheduled_time.timestamp() * 1000)
+        now_ms = int(time.time() * 1000)
 
-        if self.alarm_manager is None:
-
-            print(
-                f"CRITICAL: AlarmManager unavailable "
-                f"for alarm {alarm_id}."
+        if trigger_ms <= now_ms:
+            raise ValueError(
+                f"Alarm time is in the past: {scheduled_time.isoformat()}"
             )
 
-            return False
-
-
-        if self.activity is None:
-
-            print(
-                f"CRITICAL: Activity unavailable "
-                f"for alarm {alarm_id}."
+        if not self.can_schedule_exact_alarms():
+            raise PermissionError(
+                "Exact alarms are not permitted. Enable exact-alarm "
+                "access in Android settings."
             )
 
-            return False
+        pending_intent = self._get_pending_intent(
+            alarm_id=alarm_id,
+            update=True,
+            title=title,
+            message=message,
+            speech_text=speech_text,
+            scheduled_at_ms=trigger_ms,
+            repeat_weekly=repeat_weekly,
+        )
 
-
-        if self.context is None:
-
-            print(
-                f"CRITICAL: Context unavailable "
-                f"for alarm {alarm_id}."
+        if pending_intent is None:
+            raise RuntimeError(
+                "Android failed to create the alarm PendingIntent."
             )
-
-            return False
-
 
         try:
+            self.alarm_manager.cancel(pending_intent)
 
-            # ------------------------------------------------
-            # CREATE INTENT
-            # ------------------------------------------------
-
-            intent = Intent(
-                self.context,
-                self.activity.getClass(),
-            )
-
-            self._prepare_alarm_intent(
-                intent
-            )
-
-
-            # ------------------------------------------------
-            # UNIQUE ACTION
-            # ------------------------------------------------
-
-            action = (
-                f"com.zaimtech.CLASS_ALERT_ALARM_{alarm_id}"
-            )
-
-            intent.setAction(
-                action
-            )
-
-
-            # ------------------------------------------------
-            # ALARM TIME
-            # ------------------------------------------------
-
-            trigger_at_ms = int(
-                schld_time.timestamp() * 1000
-            )
-
-
-            # ------------------------------------------------
-            # ALARM DATA
-            # ------------------------------------------------
-
-            extras = autoclass(
-                "android.os.Bundle"
-            )()
-
-
-            extras.putInt(
-                "alarm_id",
-                alarm_id,
-            )
-
-            extras.putInt(
-                "notification_id",
-                alarm_id,
-            )
-
-            extras.putString(
-                "notification_title",
-                title,
-            )
-
-            extras.putString(
-                "notification_body",
-                message,
-            )
-
-            extras.putString(
-                "speech_text",
-                speech_text or message,
-            )
-
-            extras.putBoolean(
-                "is_alarm_trigger",
-                True,
-            )
-
-            extras.putLong(
-                "scheduled_at_ms",
-                trigger_at_ms,
-            )
-
-            extras.putBoolean(
-                "wake_for_alarm",
-                True,
-            )
-
-            intent.putExtras(
-                extras
-            )
-
-
-            # ------------------------------------------------
-            # PENDING INTENT
-            # ------------------------------------------------
-
-            pending_intent = (
-                PendingIntent.getActivity(
-                    self.context,
-                    alarm_id,
-                    intent,
-                    self._build_pending_intent_flags(),
-                )
-            )
-
-
-            if pending_intent is None:
-
-                print(
-                    f"CRITICAL: Could not create "
-                    f"PendingIntent for alarm {alarm_id}."
-                )
-
-                return False
-
-
-            # ------------------------------------------------
-            # DEBUG
-            # ------------------------------------------------
-
-            print(
-                "================================================"
-            )
-
-            print(
-                f"FletAlarm: Scheduling alarm {alarm_id}"
-            )
-
-            print(
-                f"FletAlarm: Time = {schld_time}"
-            )
-
-            print(
-                f"FletAlarm: Timestamp = {trigger_at_ms}"
-            )
-
-            print(
-                f"FletAlarm: Action = {action}"
-            )
-
-            print(
-                f"FletAlarm: Speech = "
-                f"{speech_text or message}"
-            )
-
-            print(
-                "FletAlarm: Android will wake the "
-                "application Activity at the alarm time."
-            )
-
-            print(
-                "FletAlarm: Activity flags = "
-                "NEW_TASK | CLEAR_TOP | SINGLE_TOP | "
-                "REORDER_TO_FRONT"
-            )
-
-            print(
-                "================================================"
-            )
-
-
-            # ------------------------------------------------
-            # SCHEDULE
-            # ------------------------------------------------
-
-            if repeat_weekly:
-
-                one_week_ms = (
-                    7 * 24 * 60 * 60 * 1000
-                )
-
-                self.alarm_manager.setRepeating(
-                    AlarmManager.RTC_WAKEUP,
-                    trigger_at_ms,
-                    one_week_ms,
-                    pending_intent,
-                )
-
-                print(
-                    f"FletAlarm: Weekly alarm "
-                    f"{alarm_id} scheduled."
-                )
-
-            else:
-
-                # Exact + wake from Doze.
-
+            if self.sdk >= 23:
                 self.alarm_manager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    trigger_at_ms,
+                    self.AlarmManager.RTC_WAKEUP,
+                    trigger_ms,
+                    pending_intent,
+                )
+            else:
+                self.alarm_manager.setExact(
+                    self.AlarmManager.RTC_WAKEUP,
+                    trigger_ms,
                     pending_intent,
                 )
 
-                print(
-                    f"FletAlarm: Exact wake-up alarm "
-                    f"{alarm_id} scheduled."
-                )
+        except Exception as exc:
+            _log_exception(f"SET ALARM FAILED; id={alarm_id}", exc)
+            raise
 
-
-            return True
-
-
-        except Exception as e:
-
-            print(
-                f"FletAlarm: Error scheduling "
-                f"alarm {alarm_id}: {e}"
-            )
-
-            return False
-
+        _log(
+            f"Scheduled id={alarm_id}; "
+            f"time={scheduled_time.isoformat()}; "
+            f"trigger_ms={trigger_ms}; "
+            f"repeat_weekly={bool(repeat_weekly)}"
+        )
+        return True
 
     # ========================================================
-    # CANCEL ALARM
+    # CANCEL ONE ALARM
     # ========================================================
 
-    def cancel_alarm(
-        self,
-        alarm_id: int,
-    ):
-
-        if not IS_ANDROID:
-
-            try:
-
-                Notification(
-                    id=alarm_id
-                ).cancel(
-                    alarm_id
-                )
-
-            except Exception:
-                pass
-
-            return False
-
-
-        if self.alarm_manager is None:
-
-            return False
-
-
+    def cancel_alarm(self, alarm_id):
         try:
+            alarm_id = int(alarm_id)
+            if alarm_id <= 0:
+                raise ValueError("alarm_id must be greater than zero.")
 
-            # Create the exact same Intent identity used
-            # when the alarm was scheduled.
-
-            intent = Intent(
-                self.context,
-                self.activity.getClass(),
+            pending_intent = self._get_pending_intent(
+                alarm_id=alarm_id,
+                no_create=True,
             )
-
-            self._prepare_alarm_intent(
-                intent
-            )
-
-
-            action = (
-                f"com.zaimtech.CLASS_ALERT_ALARM_{alarm_id}"
-            )
-
-            intent.setAction(
-                action
-            )
-
-
-            pending_intent = (
-                PendingIntent.getActivity(
-                    self.context,
-                    alarm_id,
-                    intent,
-                    self._build_pending_intent_flags(
-                        include_no_create=True
-                    ),
-                )
-            )
-
 
             if pending_intent is not None:
-
-                self.alarm_manager.cancel(
-                    pending_intent
-                )
-
+                self.alarm_manager.cancel(pending_intent)
                 pending_intent.cancel()
 
-                print(
-                    f"FletAlarm: Alarm "
-                    f"{alarm_id} cancelled."
-                )
-
-
-            # Cancel associated notification as well.
-
-            try:
-
-                Notification(
-                    id=alarm_id
-                ).cancel(
-                    alarm_id
-                )
-
-            except Exception:
-                pass
-
-
-            return True
-
-
-        except Exception as e:
-
-            print(
-                f"FletAlarm: Error cancelling "
-                f"alarm {alarm_id}: {e}"
+            manager = self.context.getSystemService(
+                self.Context.NOTIFICATION_SERVICE
             )
 
+            if manager is not None:
+                manager = cast(
+                    "android.app.NotificationManager",
+                    manager,
+                )
+                manager.cancel(alarm_id)
+
+            _log(f"Cancelled alarm id={alarm_id}")
+            return True
+
+        except Exception as exc:
+            _log_exception(f"CANCEL ALARM FAILED; id={alarm_id}", exc)
             return False
+
+    # ========================================================
+    # CANCEL MULTIPLE ALARMS
+    # ========================================================
+
+    def cancel_all(self, alarm_ids):
+        success = True
+
+        for alarm_id in alarm_ids:
+            if not self.cancel_alarm(alarm_id):
+                success = False
+
+        return success
