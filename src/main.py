@@ -36,20 +36,17 @@ LOG_FILE = STORAGE_DIR / "debug.log"
 
 
 # ============================================================
-# DEBUG LOG
+# DEBUG LOGGING
 # ============================================================
 
-def _log(msg: str):
+def _log(message):
     try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(
+        with open(LOG_FILE, "a", encoding="utf-8") as stream:
+            stream.write(
                 f"{datetime.now():%Y-%m-%d %H:%M:%S} "
-                f"{msg}\n"
+                f"{message}\n"
             )
-            f.flush()
-
+            stream.flush()
     except Exception:
         pass
 
@@ -70,13 +67,8 @@ class SmartAlert:
     DEFAULT_REMINDER_MINUTES = 5
 
     DAYS = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
+        "Monday", "Tuesday", "Wednesday", "Thursday",
+        "Friday", "Saturday", "Sunday",
     ]
 
     TIME_FORMATS = (
@@ -91,6 +83,7 @@ class SmartAlert:
         self.page = page
         self._tts = None
         self._tts_initializing = False
+        self._tts_lock = asyncio.Lock()
 
         # ----------------------------------------------------
         # LOAD HTML
@@ -100,8 +93,8 @@ class SmartAlert:
             html = (BASE_DIR / "index.html").read_text(
                 encoding="utf-8"
             )
-        except Exception as err:
-            _log(f"STARTUP: index.html ERROR: {err!r}")
+        except Exception as exc:
+            _log(f"STARTUP: index.html ERROR: {exc!r}")
 
             html = """
             <!DOCTYPE html>
@@ -132,33 +125,25 @@ class SmartAlert:
             self.webview.javascript_channels = ["FletBridge"]
             self.webview.on_javascript_message = self.on_message
 
-        except Exception as err:
+        except Exception as exc:
             _log(
                 "STARTUP: WebView creation ERROR:\n"
                 + traceback.format_exc()
             )
             raise RuntimeError(
-                f"Could not create the timetable WebView: {err}"
-            ) from err
+                f"Could not create timetable WebView: {exc}"
+            ) from exc
 
         # ----------------------------------------------------
         # FILE PICKER
         # ----------------------------------------------------
 
+        self.picker = ft.FilePicker()
+
         try:
-            self.picker = ft.FilePicker()
-
-            try:
-                page.services.append(self.picker)
-            except (AttributeError, TypeError):
-                page.overlay.append(self.picker)
-
-        except Exception:
-            _log(
-                "STARTUP: FilePicker ERROR:\n"
-                + traceback.format_exc()
-            )
-            raise
+            page.services.append(self.picker)
+        except (AttributeError, TypeError):
+            page.overlay.append(self.picker)
 
         # ----------------------------------------------------
         # APP BAR
@@ -182,197 +167,122 @@ class SmartAlert:
 
         _log("STARTUP: UI created successfully")
 
-        # Kotlin handles scheduled alarms.
-        # Python TTS is initialized only for manual voice tests.
-
-        self._start_task(self.request_permission, "permissions")
-        self._start_task(self.restore_alarms, "restore_alarms")
-        self._start_task(self.show_last_log, "show_last_log")
+        self._start_task(
+            self.request_permission,
+            "permissions",
+        )
+        self._start_task(
+            self.restore_alarms,
+            "restore_alarms",
+        )
+        self._start_task(
+            self.show_last_log,
+            "show_last_log",
+        )
 
         _log("STARTUP: SmartAlert initialized successfully")
 
     # ========================================================
-    # SAFE BACKGROUND TASKS
+    # TASK MANAGEMENT
     # ========================================================
 
-    def _start_task(self, coroutine_function, task_name: str):
+    def _start_task(self, coroutine_function, task_name):
         try:
             task = asyncio.create_task(coroutine_function())
             task.add_done_callback(
-                lambda completed: self._startup_task_done(
+                lambda completed: self._task_done(
                     completed,
                     task_name,
                 )
             )
+            return task
         except Exception:
             _log(
                 f"TASK: Could not start {task_name}:\n"
                 + traceback.format_exc()
             )
+            return None
 
     @staticmethod
-    def _startup_task_done(task, task_name: str):
+    def _task_done(task, task_name):
         try:
             task.result()
         except asyncio.CancelledError:
             _log(f"TASK: {task_name} cancelled")
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"TASK: {task_name} FAILED: {err!r}\n"
-                + traceback.format_exc()
+                f"TASK: {task_name} FAILED: {exc!r}\n"
+                + "".join(
+                    traceback.format_exception(
+                        type(exc), exc, exc.__traceback__
+                    )
+                )
             )
 
     def _on_test_clicked(self, _):
-        self._start_task(self.test_notification, "test_notification")
-
-    # ========================================================
-    # PYTHON TTS - MANUAL TEST ONLY
-    # ========================================================
-
-    async def initialize_tts(self):
-        if (
-            self._tts is not None
-            and getattr(self._tts, "ready", False)
-        ):
-            return True
-
-        if self._tts_initializing:
-            return False
-
-        self._tts_initializing = True
-
-        try:
-            _log("TTS: creating engine for manual test")
-            self._tts = tts.TTS()
-
-            ready = await asyncio.to_thread(
-                self._tts.wait_ready,
-                10,
-            )
-
-            _log(
-                f"TTS: ready={ready}; "
-                f"status={getattr(self._tts, 'status', None)}; "
-                f"error={getattr(self._tts, 'error', None)}"
-            )
-
-            return bool(ready)
-
-        except Exception as err:
-            _log(
-                f"TTS: initialization ERROR: {err!r}\n"
-                + traceback.format_exc()
-            )
-            self._tts = None
-            return False
-
-        finally:
-            self._tts_initializing = False
-
-    async def _ensure_tts_ready(self):
-        if (
-            self._tts is not None
-            and getattr(self._tts, "ready", False)
-        ):
-            return True
-
-        if self._tts_initializing:
-            for _ in range(40):
-                await asyncio.sleep(0.25)
-
-                if (
-                    self._tts is not None
-                    and getattr(self._tts, "ready", False)
-                ):
-                    return True
-
-                if not self._tts_initializing:
-                    break
-
-        return await self.initialize_tts()
-
-    def _speak_alert(self, spoken: str) -> bool:
-        try:
-            spoken = str(spoken or "").strip()
-
-            if not spoken or self._tts is None:
-                return False
-
-            if not getattr(self._tts, "ready", False):
-                return False
-
-            result = self._tts.speak(spoken)
-            _log(f"TTS: speak returned {result!r}")
-            return bool(result)
-
-        except Exception as err:
-            _log(
-                f"TTS: speech ERROR: {err!r}\n"
-                + traceback.format_exc()
-            )
-            return False
+        self._start_task(
+            self.test_notification,
+            "test_notification",
+        )
 
     # ========================================================
     # WEBVIEW -> PYTHON
     # ========================================================
 
-    def on_message(self, e):
+    def on_message(self, event):
         try:
-            body = e.message_body
+            body = event.message_body
+
             if isinstance(body, (str, bytes, bytearray)):
                 data = json.loads(body)
             else:
                 data = body
 
-        except (ValueError, TypeError) as err:
-            _log(f"WEBVIEW: invalid message: {err!r}")
-            self._toast(
-                "Could not read the message from the timetable.",
-                ok=False,
-            )
-            return
+            if isinstance(data, dict) and data.get("action") == "pick_docx":
+                self._start_task(self.pick_docx, "pick_docx")
+                return
 
-        if (
-            isinstance(data, dict)
-            and data.get("action") == "pick_docx"
-        ):
-            self._start_task(self.pick_docx, "pick_docx")
-            return
-
-        try:
             lessons = self._parse_payload(data)
             scheduled, skipped = self.sync_timetable(lessons)
 
-        except Exception as err:
+            if scheduled == 0:
+                self._toast(
+                    "No new timetable alarms were registered. "
+                    "Check debug.log. Existing saved alarms were retained "
+                    "where possible.",
+                    ok=False,
+                )
+            elif skipped:
+                self._toast(
+                    f"{scheduled} lesson alerts set; "
+                    f"{skipped} lesson(s) skipped.",
+                    ok=True,
+                )
+            else:
+                self._toast(
+                    f"{scheduled} lesson alerts set.",
+                    ok=True,
+                )
+
+        except (ValueError, TypeError) as exc:
+            _log(f"WEBVIEW: invalid message: {exc!r}")
+            self._toast(
+                "Could not read the timetable data.",
+                ok=False,
+            )
+
+        except Exception as exc:
             _log(
-                f"TIMETABLE: processing ERROR: {err!r}\n"
+                f"TIMETABLE: processing ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
             self._toast(
-                "Could not process the timetable. Check debug.log.",
+                "Timetable processing failed. Check debug.log.",
                 ok=False,
-            )
-            return
-
-        if scheduled == 0 and skipped:
-            self._toast(
-                "No valid lessons scheduled. "
-                "Existing alerts were retained where possible.",
-                ok=False,
-            )
-        elif skipped:
-            self._toast(
-                f"{scheduled} lesson alerts set, {skipped} skipped.",
-                ok=scheduled > 0,
-            )
-        else:
-            self._toast(
-                f"{scheduled} lesson alerts set.",
-                ok=scheduled > 0,
             )
 
     @staticmethod
-    def _parse_payload(data) -> list:
+    def _parse_payload(data):
         if isinstance(data, dict):
             for key in ("lessons", "timetable", "table", "data"):
                 if isinstance(data.get(key), list):
@@ -385,6 +295,10 @@ class SmartAlert:
         raise TypeError(
             f"Unsupported payload type: {type(data).__name__}"
         )
+
+    # ========================================================
+    # DOCX PICKER
+    # ========================================================
 
     async def pick_docx(self):
         try:
@@ -403,94 +317,68 @@ class SmartAlert:
             if not data and getattr(selected, "path", None):
                 try:
                     data = pathlib.Path(selected.path).read_bytes()
-                except Exception as err:
-                    _log(f"FILE: path read ERROR: {err!r}")
+                except Exception as exc:
+                    _log(f"FILE: path read ERROR: {exc!r}")
 
             if not data:
                 self._toast(
-                    "Could not read the selected file.",
+                    "Could not read the selected DOCX file.",
                     ok=False,
                 )
                 return
 
-            b64 = base64.b64encode(data).decode("ascii")
+            encoded = base64.b64encode(data).decode("ascii")
 
             await self.webview.run_javascript(
                 "receiveDocx("
                 f"{json.dumps(selected.name)}, "
-                f"{json.dumps(b64)}"
+                f"{json.dumps(encoded)}"
                 ")"
             )
 
             _log(f"FILE: DOCX delivered: {selected.name}")
 
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"FILE: picker ERROR: {err!r}\n"
+                f"FILE: picker ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
             self._toast(
-                f"File selection failed: {err}",
+                "File selection failed. Check debug.log.",
                 ok=False,
             )
 
     # ========================================================
-    # TIMETABLE -> ANDROID ALARMS
+    # TIMETABLE VALIDATION AND REGISTRATION
     # ========================================================
 
-    def sync_timetable(self, lessons: list) -> tuple[int, int]:
-        """
-        Validate the new timetable before changing existing alarms.
-
-        New alarms are registered before old alarms are cancelled.
-        If registration fails, cancel the new alarms and retain
-        the previous timetable as far as possible.
-        """
-
-        if not isinstance(lessons, list):
-            _log("TIMETABLE: payload is not a list")
-            return 0, 1
-
-        if not lessons:
-            _log(
-                "TIMETABLE: empty timetable rejected; "
-                "existing alarms retained"
-            )
+    def sync_timetable(self, lessons):
+        if not isinstance(lessons, list) or not lessons:
+            _log("TIMETABLE: empty or invalid timetable rejected")
             return 0, 1
 
         old_records = self._load_records()
         records = []
         skipped = 0
 
-        # Build records without changing existing alarms.
         for lesson in lessons:
             try:
-                record = self._build_record(
-                    lesson,
-                    len(records) + 1,
-                )
-
+                record = self._build_record(lesson, len(records) + 1)
                 if record is None:
                     skipped += 1
                 else:
                     records.append(record)
-
-            except Exception as err:
+            except Exception as exc:
                 skipped += 1
                 _log(
-                    f"TIMETABLE: parsing failed: {err!r}\n"
+                    f"TIMETABLE: invalid lesson: {exc!r}\n"
                     + traceback.format_exc()
                 )
 
         if not records:
-            _log(
-                "TIMETABLE: no valid lessons; "
-                "existing timetable retained"
-            )
+            _log("TIMETABLE: no valid lessons; old alarms retained")
             return 0, skipped
 
-        # Allocate IDs that do not conflict with saved alarms.
-        # Android PendingIntents often use IDs to identify alarms.
         existing_ids = {
             int(record["id"])
             for record in old_records
@@ -506,15 +394,13 @@ class SmartAlert:
 
             while candidate in existing_ids:
                 candidate = (candidate + 1) % 2_000_000_000
-
                 if candidate <= 0:
                     candidate = 1
 
             record["id"] = candidate
             existing_ids.add(candidate)
 
-        # Register all new alarms before cancelling the old ones.
-        successfully_scheduled = []
+        scheduled_records = []
 
         for record in records:
             try:
@@ -525,45 +411,34 @@ class SmartAlert:
                     record["grade"],
                     record.get("speech", ""),
                 )
+                scheduled_records.append(record)
 
-                successfully_scheduled.append(record)
-
-            except Exception as err:
+            except Exception as exc:
                 _log(
-                    f"TIMETABLE: scheduling failed "
-                    f"id={record['id']}: {err!r}\n"
+                    f"TIMETABLE: scheduling failed for "
+                    f"{record['id']}: {exc!r}\n"
                     + traceback.format_exc()
                 )
                 break
 
-        # Do not replace the saved timetable if registration fails.
-        if len(successfully_scheduled) != len(records):
-            for record in successfully_scheduled:
+        if len(scheduled_records) != len(records):
+            for record in scheduled_records:
                 self._cancel_alarm(record["id"])
 
             _log(
-                "TIMETABLE: replacement aborted; "
-                "previous saved timetable retained"
+                "TIMETABLE: registration failed; "
+                "old saved records retained"
             )
             return 0, skipped + 1
 
-        # Save new records to a temporary file and replace atomically.
         if not self._save_records(records):
-            for record in successfully_scheduled:
+            for record in scheduled_records:
                 self._cancel_alarm(record["id"])
 
-            _log(
-                "TIMETABLE: saving failed; "
-                "new alarms cancelled"
-            )
+            _log("TIMETABLE: save failed; new alarms cancelled")
             return 0, skipped + 1
 
-        # New alarms are now registered and saved.
-        # Cancel previous alarms only after successful replacement.
-        new_ids = {
-            int(record["id"])
-            for record in records
-        }
+        new_ids = {int(record["id"]) for record in records}
 
         for old in old_records:
             if int(old["id"]) not in new_ids:
@@ -576,31 +451,26 @@ class SmartAlert:
 
         return len(records), skipped
 
-    def _build_record(self, lesson, nt_id: int):
+    def _build_record(self, lesson, nt_id):
         if not isinstance(lesson, dict):
             return None
 
         row = {
-            str(k).lower().strip(): v
-            for k, v in lesson.items()
+            str(key).lower().strip(): value
+            for key, value in lesson.items()
         }
 
         day = self._parse_day(row.get("day"))
         start = self._parse_start_time(row.get("time"))
-
         subject = self._clean(
             row.get("lesson") or row.get("subject")
         )
 
         if day is None or start is None or not subject:
-            _log(
-                f"TIMETABLE: skipping invalid lesson: {lesson!r}"
-            )
+            _log(f"TIMETABLE: skipping invalid lesson: {lesson!r}")
             return None
 
-        grade = self._clean(
-            row.get("class") or row.get("grade")
-        )
+        grade = self._clean(row.get("class") or row.get("grade"))
         speech = self._clean(row.get("speech"))
 
         reminder = self._to_int(
@@ -610,10 +480,11 @@ class SmartAlert:
         reminder = max(0, min(reminder, 1440))
 
         class_time = self._next_weekday(day, start)
+        alarm_time = self._alarm_time(class_time, reminder)
 
         return {
             "id": nt_id,
-            "time": self._alarm_time(class_time, reminder),
+            "time": alarm_time,
             "class_time": class_time,
             "reminder_before": reminder,
             "subject": subject,
@@ -622,11 +493,11 @@ class SmartAlert:
         }
 
     # ========================================================
-    # PARSING / TIME HELPERS
+    # DATE AND TIME HELPERS
     # ========================================================
 
     @staticmethod
-    def _clean(value) -> str:
+    def _clean(value):
         return (
             str(value or "")
             .replace("|", " ")
@@ -636,38 +507,26 @@ class SmartAlert:
         )
 
     @staticmethod
-    def _to_int(value, default: int) -> int:
+    def _to_int(value, default):
         try:
-            text = str(value).strip()
-
-            if not text:
-                return default
-
-            n = int(text.split()[0])
-            return n if n >= 0 else default
-
+            number = int(str(value).strip().split()[0])
+            return number if number >= 0 else default
         except (ValueError, IndexError, TypeError):
             return default
 
-    def _parse_day(self, value) -> int | None:
-        text = str(value or "").strip().lower()
-        text = re.sub(r"[^a-z]", "", text)
+    def _parse_day(self, value):
+        text = re.sub(r"[^a-z]", "", str(value or "").lower())
 
         if len(text) < 2:
             return None
 
-        for i, name in enumerate(self.DAYS):
-            name_lower = name.lower()
-
-            if (
-                name_lower.startswith(text)
-                or text == name_lower[:3]
-            ):
-                return i
+        for index, name in enumerate(self.DAYS):
+            if name.lower().startswith(text) or text == name[:3].lower():
+                return index
 
         return None
 
-    def _parse_start_time(self, value) -> time | None:
+    def _parse_start_time(self, value):
         text = str(value or "").strip()
 
         if not text:
@@ -680,36 +539,30 @@ class SmartAlert:
             flags=re.I,
         )[0].strip()
 
-        start = re.sub(r"\s+", " ", start).strip()
+        start = re.sub(r"\s+", " ", start)
 
         for fmt in self.TIME_FORMATS:
             try:
-                return datetime.strptime(
-                    start.upper(),
-                    fmt,
-                ).time()
+                return datetime.strptime(start.upper(), fmt).time()
             except ValueError:
                 continue
 
         match = re.fullmatch(r"(\d{1,2})[:.](\d{2})", start)
 
         if match:
-            hour = int(match.group(1))
-            minute = int(match.group(2))
-
+            hour, minute = map(int, match.groups())
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return time(hour, minute)
 
         return None
 
     @staticmethod
-    def _next_weekday(day_index: int, start: time) -> datetime:
+    def _next_weekday(day_index, start):
         now = datetime.now()
-
-        ahead = (day_index - now.weekday()) % 7
+        days_ahead = (day_index - now.weekday()) % 7
 
         candidate = datetime.combine(
-            now.date() + timedelta(days=ahead),
+            now.date() + timedelta(days=days_ahead),
             start,
         )
 
@@ -719,45 +572,40 @@ class SmartAlert:
         return candidate
 
     @staticmethod
-    def _alarm_time(class_time: datetime, reminder: int) -> datetime:
-        alarm = class_time - timedelta(minutes=reminder)
+    def _alarm_time(class_time, reminder):
+        candidate = class_time - timedelta(minutes=reminder)
 
-        if alarm <= datetime.now():
-            return class_time
-
-        return alarm
+        # Never send a past time to Android AlarmManager.
+        # If the reminder time has passed, alert at class time.
+        return candidate if candidate > datetime.now() else class_time
 
     @staticmethod
-    def _next_future(value: datetime) -> datetime:
+    def _next_future(value):
         now = datetime.now()
-
         while value <= now:
             value += timedelta(days=7)
-
         return value
 
     # ========================================================
     # STORAGE
     # ========================================================
 
-    def _load_records(self) -> list[dict]:
-        records = []
-
+    def _load_records(self):
         if not ALERTS_FILE.exists():
-            return records
+            return []
+
+        records = []
 
         try:
             lines = ALERTS_FILE.read_text(
                 encoding="utf-8"
             ).splitlines()
-        except Exception as err:
-            _log(f"STORAGE: read ERROR: {err!r}")
-            return records
+        except Exception as exc:
+            _log(f"STORAGE: read ERROR: {exc!r}")
+            return []
 
         for line in lines:
-            line = line.strip()
-
-            if not line:
+            if not line.strip():
                 continue
 
             try:
@@ -767,42 +615,35 @@ class SmartAlert:
                     parts.append("")
 
                 if len(parts) != 7:
-                    _log(
-                        f"STORAGE: malformed record: {line!r}"
-                    )
+                    _log(f"STORAGE: malformed record: {line!r}")
                     continue
 
-                id_, alarm, klass, rem, subject, grade, speech = parts
+                alarm_id, alarm, klass, reminder, subject, grade, speech = parts
 
                 records.append({
-                    "id": int(id_),
+                    "id": int(alarm_id),
                     "time": datetime.fromisoformat(alarm),
                     "class_time": datetime.fromisoformat(klass),
-                    "reminder_before": int(rem),
+                    "reminder_before": int(reminder),
                     "subject": subject,
                     "grade": grade,
                     "speech": speech,
                 })
 
-            except (ValueError, TypeError) as err:
-                _log(
-                    f"STORAGE: invalid entry: {line!r}: {err!r}"
-                )
+            except (ValueError, TypeError) as exc:
+                _log(f"STORAGE: invalid record: {exc!r}")
 
         return records
 
-    def _save_records(self, records) -> bool:
+    def _save_records(self, records):
+        temp_file = ALERTS_FILE.with_suffix(".tmp")
+
         try:
-            ALERTS_FILE.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+            ALERTS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-            temp_file = ALERTS_FILE.with_suffix(".tmp")
-
-            with open(temp_file, "w", encoding="utf-8") as f:
+            with open(temp_file, "w", encoding="utf-8") as stream:
                 for record in records:
-                    f.write(
+                    stream.write(
                         f"{record['id']}|"
                         f"{record['time'].isoformat()}|"
                         f"{record['class_time'].isoformat()}|"
@@ -812,18 +653,24 @@ class SmartAlert:
                         f"{record.get('speech', '')}\n"
                     )
 
-                f.flush()
-                os.fsync(f.fileno())
+                stream.flush()
+                os.fsync(stream.fileno())
 
             temp_file.replace(ALERTS_FILE)
             _log(f"STORAGE: saved {len(records)} records")
             return True
 
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"STORAGE: write ERROR: {err!r}\n"
+                f"STORAGE: write ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
+
+            try:
+                temp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
             return False
 
     # ========================================================
@@ -832,18 +679,25 @@ class SmartAlert:
 
     def _schedule_alarm(
         self,
-        nt_id: int,
-        when: datetime,
-        subject: str,
-        grade: str,
-        speech: str = "",
+        nt_id,
+        when,
+        subject,
+        grade,
+        speech="",
     ):
         from flet_alarm import FletAlarm
 
-        suffix = f" for {grade}" if grade else ""
+        if not isinstance(when, datetime):
+            raise TypeError("Alarm time must be datetime")
+
+        if when <= datetime.now():
+            raise ValueError(
+                f"Refusing to schedule past alarm: {when.isoformat()}"
+            )
+
+        grade_text = f" for {grade}" if grade else ""
 
         speech_text = str(speech or "").strip()
-
         if not speech_text:
             speech_text = (
                 f"{subject}"
@@ -851,27 +705,19 @@ class SmartAlert:
                 + ", class starts now."
             )
 
-        title = (
-            f"Class Starting: {subject}"
-            + (f", grade {grade}" if grade else "")
-        )
+        title = f"Class Starting: {subject}"
+        if grade:
+            title += f", grade {grade}"
 
-        message = f"Your {subject} class{suffix} is ready."
-
-        if not isinstance(when, datetime):
-            raise TypeError("Alarm time must be a datetime")
-
-        if when <= datetime.now():
-            raise ValueError(
-                f"Refusing to schedule a past alarm: {when.isoformat()}"
-            )
+        message = f"Your {subject} class{grade_text} is ready."
 
         _log(
             f"ALARM: registering id={nt_id}; "
             f"time={when.isoformat()}"
         )
 
-        FletAlarm().set_alarm(
+        alarm = FletAlarm()
+        result = alarm.set_alarm(
             when,
             nt_id,
             title=title,
@@ -880,87 +726,64 @@ class SmartAlert:
             repeat_weekly=True,
         )
 
+        if result is False:
+            raise RuntimeError(
+                f"FletAlarm returned failure for alarm {nt_id}"
+            )
+
         _log(f"ALARM: registered id={nt_id}")
 
-    def _cancel_alarm(self, nt_id: int):
+    def _cancel_alarm(self, nt_id):
         try:
             from flet_alarm import FletAlarm
-
             FletAlarm().cancel_alarm(nt_id)
             _log(f"ALARM: cancelled id={nt_id}")
-
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"ALARM: cancel ERROR id={nt_id}: {err!r}"
+                f"ALARM: cancel ERROR id={nt_id}: {exc!r}"
             )
 
-        # Clean up notifications created by older app versions.
         try:
             Notification(id=nt_id).cancel(nt_id)
-        except Exception as err:
-            _log(
-                f"NOTIFICATION: cancel ERROR: {err!r}"
-            )
+        except Exception as exc:
+            _log(f"NOTIFICATION: cancel ERROR: {exc!r}")
 
     # ========================================================
-    # TEST NOTIFICATION
+    # NOTIFICATIONS
     # ========================================================
 
     @staticmethod
-    def _build_notification(
-        nt_id: int,
-        title: str,
-        body: str,
-        custom_sound: bool = False,
-    ):
-        notif = Notification(
+    def _build_notification(nt_id, title, body):
+        return Notification(
             id=nt_id,
             title=title,
             message=body,
         )
 
-        try:
-            notif.icon_name = "ic_lock_idle_alarm"
-        except Exception:
-            pass
-
-        if custom_sound:
-            sound_path = BASE_DIR / "assets" / "alarmsound.mp3"
-
-            if sound_path.exists():
-                try:
-                    notif.setSound(sound_path=str(sound_path))
-                except Exception as err:
-                    _log(
-                        f"NOTIFICATION: sound ERROR: {err!r}"
-                    )
-
-        return notif
-
     @staticmethod
-    def _send_notification(notif, body: str) -> bool:
+    def _send_notification(notification, body):
         try:
             try:
-                notif.setBigText(body)
+                notification.setBigText(body)
             except Exception:
                 pass
 
-            result = notif.send(silent=False)
+            result = notification.send(silent=False)
             _log(f"NOTIFICATION: send returned {result!r}")
             return True
 
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"NOTIFICATION: send ERROR: {err!r}\n"
+                f"NOTIFICATION: send ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
             return False
 
     # ========================================================
-    # TOAST
+    # UI FEEDBACK
     # ========================================================
 
-    def _toast(self, message: str, ok: bool = True):
+    def _toast(self, message, ok=True):
         try:
             self.page.show_dialog(
                 ft.SnackBar(
@@ -972,72 +795,71 @@ class SmartAlert:
                     ),
                 )
             )
-        except Exception as err:
-            _log(f"UI: toast ERROR: {err!r}")
+        except Exception as exc:
+            _log(f"UI: toast ERROR: {exc!r}")
+
+    def close_dialog(self):
+        try:
+            self.page.pop_dialog()
+        except Exception:
+            pass
+
+        try:
+            self.page.update()
+        except Exception:
+            pass
 
     # ========================================================
-    # RESTORE ALARMS
+    # RESTORE SAVED ALARMS
     # ========================================================
 
     async def restore_alarms(self):
-        try:
-            records = self._load_records()
+        records = self._load_records()
 
-            if not records:
-                _log("RESTORE: no saved alarms")
-                return
+        if not records:
+            _log("RESTORE: no saved alarms")
+            return
 
-            changed = False
+        changed = False
 
-            for record in records:
-                try:
-                    class_time = self._next_future(
-                        record["class_time"]
-                    )
+        for record in records:
+            try:
+                class_time = self._next_future(record["class_time"])
+                alarm_time = self._alarm_time(
+                    class_time,
+                    record["reminder_before"],
+                )
 
-                    alarm = self._alarm_time(
-                        class_time,
-                        record["reminder_before"],
-                    )
+                if (
+                    class_time != record["class_time"]
+                    or alarm_time != record["time"]
+                ):
+                    record["class_time"] = class_time
+                    record["time"] = alarm_time
+                    changed = True
 
-                    if (
-                        class_time != record["class_time"]
-                        or alarm != record["time"]
-                    ):
-                        record["class_time"] = class_time
-                        record["time"] = alarm
-                        changed = True
+                self._schedule_alarm(
+                    record["id"],
+                    alarm_time,
+                    record["subject"],
+                    record["grade"],
+                    record.get("speech", ""),
+                )
 
-                    self._schedule_alarm(
-                        record["id"],
-                        alarm,
-                        record["subject"],
-                        record["grade"],
-                        record.get("speech", ""),
-                    )
+            except Exception as exc:
+                _log(
+                    f"RESTORE: alarm {record.get('id')} failed: "
+                    f"{exc!r}\n"
+                    + traceback.format_exc()
+                )
 
-                except Exception as err:
-                    _log(
-                        f"RESTORE: alarm {record.get('id')} "
-                        f"ERROR: {err!r}\n"
-                        + traceback.format_exc()
-                    )
+        if changed:
+            self._save_records(records)
 
-            if changed:
-                self._save_records(records)
-
-            _log(
-                f"RESTORE: processed {len(records)} saved alarms"
-            )
-
-        except Exception as err:
-            _log(
-                f"RESTORE: ERROR: {err!r}\n"
-                + traceback.format_exc()
-            )
+        _log(f"RESTORE: processed {len(records)} saved alarms")
 
     # ========================================================
-    # SHOW PREVIOUS LOG
+    # PREVIOUS LOG
     # ========================================================
 
     async def show_last_log(self):
@@ -1079,70 +901,105 @@ class SmartAlert:
 
             _log("STARTUP: app started")
 
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"LOG DISPLAY: ERROR: {err!r}\n"
+                f"LOG DISPLAY: ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
 
     # ========================================================
-    # DIALOG
+    # MANUAL VOICE TEST
     # ========================================================
 
-    def close_dialog(self):
+    async def initialize_tts(self):
+        async with self._tts_lock:
+            if (
+                self._tts is not None
+                and getattr(self._tts, "ready", False)
+            ):
+                return True
+
+            try:
+                _log("TTS: creating engine for manual test")
+                self._tts = tts.TTS()
+
+                ready = await asyncio.to_thread(
+                    self._tts.wait_ready,
+                    10,
+                )
+
+                _log(
+                    f"TTS: ready={ready}; "
+                    f"status={getattr(self._tts, 'status', None)}; "
+                    f"error={getattr(self._tts, 'error', None)}"
+                )
+
+                return bool(ready)
+
+            except Exception as exc:
+                _log(
+                    f"TTS: initialization ERROR: {exc!r}\n"
+                    + traceback.format_exc()
+                )
+                self._tts = None
+                return False
+
+    async def _ensure_tts_ready(self):
+        if (
+            self._tts is not None
+            and getattr(self._tts, "ready", False)
+        ):
+            return True
+
+        return await self.initialize_tts()
+
+    def _speak_alert(self, spoken):
         try:
-            self.page.pop_dialog()
-        except Exception:
-            pass
+            spoken = str(spoken or "").strip()
 
-        try:
-            self.page.update()
-        except Exception:
-            pass
+            if (
+                not spoken
+                or self._tts is None
+                or not getattr(self._tts, "ready", False)
+            ):
+                return False
 
-    # ========================================================
-    # TEST NOTIFICATION + VOICE
-    # ========================================================
+            result = self._tts.speak(spoken)
+            _log(f"TTS: speak returned {result!r}")
+            return bool(result)
+
+        except Exception as exc:
+            _log(
+                f"TTS: speech ERROR: {exc!r}\n"
+                + traceback.format_exc()
+            )
+            return False
 
     async def test_notification(self):
         body = "If you see this, notifications are working!"
 
-        try:
-            sent = self._send_notification(
-                self._build_notification(
-                    999,
-                    "Test Notification",
-                    body,
-                ),
+        sent = self._send_notification(
+            self._build_notification(
+                999,
+                "Test Notification",
                 body,
-            )
+            ),
+            body,
+        )
 
-            self._toast(
-                (
-                    "Test sent! Check your notification tray."
-                    if sent
-                    else "Test failed. Check Android notification settings."
-                ),
-                ok=sent,
-            )
+        self._toast(
+            "Test notification sent."
+            if sent
+            else "Test notification failed. Check permissions.",
+            ok=sent,
+        )
 
-            self._start_task(self.test_voice, "test_voice")
-
-        except Exception as err:
-            _log(
-                f"TEST: notification ERROR: {err!r}\n"
-                + traceback.format_exc()
-            )
-            self._toast(
-                f"Error sending test notification: {err}",
-                ok=False,
-            )
+        self._start_task(self.test_voice, "test_voice")
 
     async def test_voice(self):
         await asyncio.sleep(1)
 
         try:
-            _log("TEST TTS: starting")
             ready = await self._ensure_tts_ready()
 
             if ready:
@@ -1150,42 +1007,31 @@ class SmartAlert:
                     "Voice test. Mathematics, in two minutes."
                 )
 
-                if success:
-                    result = (
-                        "TTS READY\n\n"
-                        f"Context: "
-                        f"{getattr(self._tts, 'context_source', 'unknown')}\n\n"
-                        "Speech command sent successfully."
-                    )
-                else:
-                    result = (
+                result = (
+                    "TTS READY\n\nSpeech request accepted."
+                    if success
+                    else (
                         "TTS initialized, but speech failed.\n\n"
                         f"Status: {getattr(self._tts, 'status', None)}\n"
                         f"Error: {getattr(self._tts, 'error', None)}"
                     )
+                )
             else:
                 result = (
                     "TTS NOT READY.\n\n"
                     f"Status: {getattr(self._tts, 'status', None)}\n"
-                    f"Error: {getattr(self._tts, 'error', None)}\n"
-                    f"Context: "
-                    f"{getattr(self._tts, 'context_source', 'unknown')}"
+                    f"Error: {getattr(self._tts, 'error', None)}"
                 )
 
-            _log(f"TEST TTS: {result}")
-
-        except Exception as err:
-            result = f"TTS TEST ERROR: {err!r}"
+        except Exception as exc:
+            result = f"TTS TEST ERROR: {exc!r}"
             _log(f"{result}\n{traceback.format_exc()}")
 
         try:
             self.page.show_dialog(
                 ft.AlertDialog(
                     title=ft.Text("Voice test"),
-                    content=ft.Text(
-                        result,
-                        selectable=True,
-                    ),
+                    content=ft.Text(result, selectable=True),
                     actions=[
                         ft.TextButton(
                             "OK",
@@ -1194,8 +1040,8 @@ class SmartAlert:
                     ],
                 )
             )
-        except Exception as err:
-            _log(f"TEST TTS: dialog ERROR: {err!r}")
+        except Exception as exc:
+            _log(f"TEST TTS: dialog ERROR: {exc!r}")
 
     # ========================================================
     # PERMISSIONS
@@ -1203,7 +1049,7 @@ class SmartAlert:
 
     async def request_permission(self):
         try:
-            ph = fph.PermissionHandler()
+            handler = fph.PermissionHandler()
 
             permissions = (
                 (
@@ -1222,40 +1068,26 @@ class SmartAlert:
 
             for permission, label in permissions:
                 try:
-                    result = await ph.request(permission)
-
+                    result = await handler.request(permission)
                     _log(f"PERMISSION: {label}: {result!r}")
 
-                    if (
-                        result is not None
-                        and getattr(result, "name", "") == "DENIED"
-                    ):
-                        self._toast(
-                            f"{label} permission was denied. "
-                            "Enable it in Android settings if needed.",
-                            ok=False,
-                        )
-
-                except Exception as err:
+                except Exception as exc:
                     _log(
-                        f"PERMISSION: {label} request ERROR: {err!r}"
+                        f"PERMISSION: {label} ERROR: {exc!r}"
                     )
 
             try:
-                await ph.request(
+                await handler.request(
                     fph.Permission.IGNORE_BATTERY_OPTIMIZATIONS
                 )
-            except Exception as err:
-                _log(
-                    "PERMISSION: battery optimization request "
-                    f"ERROR: {err!r}"
-                )
+            except Exception as exc:
+                _log(f"PERMISSION: battery request ERROR: {exc!r}")
 
             _log("PERMISSION: requests completed")
 
-        except Exception as err:
+        except Exception as exc:
             _log(
-                f"PERMISSION: ERROR: {err!r}\n"
+                f"PERMISSION: ERROR: {exc!r}\n"
                 + traceback.format_exc()
             )
 
@@ -1268,16 +1100,12 @@ def main(page: ft.Page):
     try:
         page.title = "Smart Timetable Lesson Alert"
         SmartAlert(page)
-
-    except Exception as err:
+    except Exception as exc:
         _log(
-            f"FATAL: main() failed: {err!r}\n"
+            f"FATAL: main() failed: {exc!r}\n"
             + traceback.format_exc()
         )
         raise
 
 
-ft.run(
-    main,
-    assets_dir="assets",
-)
+ft.run(main, assets_dir="assets")
