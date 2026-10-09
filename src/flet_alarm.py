@@ -29,21 +29,48 @@ def _log(message):
 
 
 # ============================================================
+# ANDROID APPLICATION CONTEXT
+# ============================================================
+
+def _get_application_context():
+    """
+    Get Android's application context without depending on
+    Kivy or probing unknown Activity class names.
+
+    This function must run inside the Android app process.
+    """
+
+    ActivityThread = autoclass("android.app.ActivityThread")
+    application = ActivityThread.currentApplication()
+
+    if application is None:
+        raise RuntimeError(
+            "Android currentApplication() returned None. "
+            "The alarm service was accessed before Android "
+            "application initialization completed."
+        )
+
+    context = application.getApplicationContext()
+
+    if context is None:
+        raise RuntimeError(
+            "Android returned a null application context."
+        )
+
+    return cast("android.content.Context", context)
+
+
+# ============================================================
 # FLET ALARM
 # ============================================================
 
 class FletAlarm:
 
     def __init__(self):
-        """
-        Obtain Android's application context without probing
-        unknown Activity class names.
-
-        This avoids the native process abort caused by trying
-        to autoclass() unsupported Activity classes.
-        """
+        """Initialize Android alarm services."""
 
         try:
+            # Resolve only standard Android framework classes.
             self.Build = autoclass("android.os.Build")
             self.Context = autoclass("android.content.Context")
             self.Intent = autoclass("android.content.Intent")
@@ -57,29 +84,12 @@ class FletAlarm:
                 "android.provider.Settings"
             )
             self.Uri = autoclass("android.net.Uri")
-            self.ActivityThread = autoclass(
-                "android.app.ActivityThread"
-            )
             self.NotificationManager = autoclass(
                 "android.app.NotificationManager"
             )
 
-            application = self.ActivityThread.currentApplication()
-
-            if application is None:
-                raise RuntimeError(
-                    "Android application context is unavailable."
-                )
-
-            self.context = cast(
-                "android.content.Context",
-                application.getApplicationContext(),
-            )
-
-            if self.context is None:
-                raise RuntimeError(
-                    "Could not obtain Android application context."
-                )
+            # Do not use Kivy's PythonActivity in a Flet app.
+            self.context = _get_application_context()
 
             self.package_name = str(self.context.getPackageName())
             self.sdk = int(self.Build.VERSION.SDK_INT)
@@ -93,20 +103,20 @@ class FletAlarm:
 
             if self.alarm_manager is None:
                 raise RuntimeError(
-                    "Android AlarmManager is unavailable."
+                    "Android AlarmManager service is unavailable."
                 )
 
             _log(
-                f"Initialized successfully: "
+                "Initialized: "
                 f"package={self.package_name}, sdk={self.sdk}"
             )
 
         except Exception as exc:
-            _log(f"INITIALIZATION FAILED: {exc}")
-            raise RuntimeError(
-                "Could not initialize Android alarm services. "
-                "Check Pyjnius and Android application-context access."
-            ) from exc
+            _log(
+                "INITIALIZATION FAILED: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            raise
 
     # ========================================================
     # EXACT ALARM PERMISSION
@@ -121,7 +131,10 @@ class FletAlarm:
                 self.alarm_manager.canScheduleExactAlarms()
             )
         except Exception as exc:
-            _log(f"Exact alarm permission check failed: {exc}")
+            _log(
+                "Exact alarm permission check failed: "
+                f"{exc}"
+            )
             return False
 
     def open_exact_alarm_settings(self):
@@ -132,13 +145,9 @@ class FletAlarm:
             intent = self.Intent(
                 self.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
             )
-
             intent.setData(
                 self.Uri.parse(f"package:{self.package_name}")
             )
-
-            # Application context requires this flag when starting
-            # an Activity outside an existing Activity context.
             intent.addFlags(
                 int(self.Intent.FLAG_ACTIVITY_NEW_TASK)
             )
@@ -147,14 +156,20 @@ class FletAlarm:
             return True
 
         except Exception as exc:
-            _log(f"Could not open exact alarm settings: {exc}")
+            _log(
+                f"Could not open exact alarm settings: {exc}"
+            )
             return False
 
     # ========================================================
     # PENDING INTENT FLAGS
     # ========================================================
 
-    def _pending_intent_flags(self, update=False, no_create=False):
+    def _pending_intent_flags(
+        self,
+        update=False,
+        no_create=False,
+    ):
         flags = 0
 
         if self.sdk >= 23:
@@ -184,20 +199,32 @@ class FletAlarm:
         alarm_id = int(alarm_id)
 
         intent = self.Intent()
-        intent.setClassName(self.context, RECEIVER_CLASS)
+        intent.setClassName(
+            self.context,
+            RECEIVER_CLASS,
+        )
         intent.setAction(f"{ACTION_PREFIX}{alarm_id}")
 
         intent.putExtra(EXTRA_ALARM_ID, alarm_id)
         intent.putExtra(EXTRA_NOTIFICATION_ID, alarm_id)
 
         if title is not None:
-            intent.putExtra(EXTRA_NOTIFICATION_TITLE, str(title))
+            intent.putExtra(
+                EXTRA_NOTIFICATION_TITLE,
+                str(title),
+            )
 
         if message is not None:
-            intent.putExtra(EXTRA_NOTIFICATION_BODY, str(message))
+            intent.putExtra(
+                EXTRA_NOTIFICATION_BODY,
+                str(message),
+            )
 
         if speech_text is not None:
-            intent.putExtra(EXTRA_SPEECH_TEXT, str(speech_text))
+            intent.putExtra(
+                EXTRA_SPEECH_TEXT,
+                str(speech_text),
+            )
 
         if scheduled_at_ms is not None:
             intent.putExtra(
@@ -255,52 +282,57 @@ class FletAlarm:
         speech_text="",
         repeat_weekly=True,
     ):
-        alarm_label = alarm_id
+        """
+        Schedule a one-time Android alarm.
 
-        try:
-            if not isinstance(scheduled_time, datetime.datetime):
-                raise TypeError(
-                    "scheduled_time must be datetime.datetime"
-                )
+        If repeat_weekly is True, AlarmReceiver must schedule
+        the next occurrence after receiving this alarm.
+        """
 
-            alarm_id = int(alarm_id)
-            alarm_label = alarm_id
-
-            if alarm_id <= 0:
-                raise ValueError(
-                    "alarm_id must be greater than zero"
-                )
-
-            # Convert the supplied datetime to Unix milliseconds.
-            trigger_ms = int(scheduled_time.timestamp() * 1000)
-
-            if trigger_ms <= int(time.time() * 1000):
-                raise ValueError(
-                    f"Alarm time is in the past: {scheduled_time}"
-                )
-
-            if not self.can_schedule_exact_alarms():
-                raise PermissionError(
-                    "Exact alarms are disabled. Enable the app's "
-                    "exact-alarm permission in Android settings."
-                )
-
-            pending_intent = self._get_pending_intent(
-                alarm_id=alarm_id,
-                update=True,
-                title=title,
-                message=message,
-                speech_text=speech_text,
-                scheduled_at_ms=trigger_ms,
-                repeat_weekly=repeat_weekly,
+        if not isinstance(scheduled_time, datetime.datetime):
+            raise TypeError(
+                "scheduled_time must be datetime.datetime"
             )
 
-            if pending_intent is None:
-                raise RuntimeError(
-                    "Android could not create the PendingIntent."
-                )
+        alarm_id = int(alarm_id)
 
-            # Replace an existing alarm with the same ID.
+        if alarm_id <= 0:
+            raise ValueError(
+                "alarm_id must be greater than zero"
+            )
+
+        # Respect timezone information when supplied.
+        trigger_ms = int(scheduled_time.timestamp() * 1000)
+        now_ms = int(time.time() * 1000)
+
+        if trigger_ms <= now_ms:
+            raise ValueError(
+                f"Alarm time is in the past: {scheduled_time}"
+            )
+
+        if not self.can_schedule_exact_alarms():
+            raise PermissionError(
+                "Exact alarms are not permitted. Enable the "
+                "exact-alarm permission in Android settings."
+            )
+
+        pending_intent = self._get_pending_intent(
+            alarm_id=alarm_id,
+            update=True,
+            title=title,
+            message=message,
+            speech_text=speech_text,
+            scheduled_at_ms=trigger_ms,
+            repeat_weekly=repeat_weekly,
+        )
+
+        if pending_intent is None:
+            raise RuntimeError(
+                "Android failed to create the alarm PendingIntent."
+            )
+
+        try:
+            # Replace any existing alarm with this identity.
             self.alarm_manager.cancel(pending_intent)
 
             if self.sdk >= 23:
@@ -316,17 +348,20 @@ class FletAlarm:
                     pending_intent,
                 )
 
-            _log(
-                f"Scheduled successfully: id={alarm_id}, "
-                f"time={scheduled_time}, "
-                f"repeat_weekly={repeat_weekly}"
-            )
-
-            return True
-
         except Exception as exc:
-            _log(f"SET ALARM FAILED: id={alarm_label}: {exc}")
+            _log(
+                f"SET ALARM FAILED: id={alarm_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
             raise
+
+        _log(
+            f"Scheduled: id={alarm_id}, "
+            f"time={scheduled_time.isoformat()}, "
+            f"repeat_weekly={repeat_weekly}"
+        )
+
+        return True
 
     # ========================================================
     # CANCEL ONE ALARM
@@ -364,7 +399,10 @@ class FletAlarm:
             return True
 
         except Exception as exc:
-            _log(f"CANCEL ALARM FAILED: id={alarm_id}: {exc}")
+            _log(
+                f"CANCEL ALARM FAILED: id={alarm_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
             return False
 
     # ========================================================
