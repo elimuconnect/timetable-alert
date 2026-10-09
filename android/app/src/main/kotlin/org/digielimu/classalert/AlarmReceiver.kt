@@ -1,3 +1,4 @@
+
 package org.digielimu.classalert
 
 import android.app.AlarmManager
@@ -12,9 +13,10 @@ import android.media.AudioAttributes
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.provider.Settings
+import android.util.Log
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -32,12 +34,11 @@ class AlarmReceiver : BroadcastReceiver() {
         const val EXTRA_SCHEDULED_AT_MS = "scheduled_at_ms"
         const val EXTRA_REPEAT_WEEKLY = "repeat_weekly"
 
+        private const val TAG = "ClassAlertAlarm"
         private const val CHANNEL_ID = "class_alert_alarms"
         private const val CHANNEL_NAME = "Class Alert Alarms"
-        private const val TAG = "ClassAlertAlarm"
         private const val WAKELOCK_TAG = "ClassAlert:AlarmTTS"
-        private const val WAKELOCK_TIME = 60_000L
-
+        private const val WAKELOCK_TIME_MS = 60_000L
         private const val WEEK_MS =
             7L * 24L * 60L * 60L * 1000L
     }
@@ -46,7 +47,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
 
         if (!action.startsWith(ACTION_PREFIX)) {
-            android.util.Log.d(TAG, "Ignoring unrelated action: $action")
+            Log.d(TAG, "Ignoring unrelated action: $action")
             return
         }
 
@@ -56,7 +57,7 @@ class AlarmReceiver : BroadcastReceiver() {
         )
 
         if (alarmId <= 0) {
-            android.util.Log.e(TAG, "Invalid alarm ID")
+            Log.e(TAG, "Invalid alarm ID")
             return
         }
 
@@ -75,7 +76,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
         val speech = intent.getStringExtra(
             EXTRA_SPEECH_TEXT
-        )?.trim()?.takeIf { it.isNotEmpty() } ?: body
+        )?.trim()?.ifEmpty { null } ?: body
 
         val scheduledAt = intent.getLongExtra(
             EXTRA_SCHEDULED_AT_MS,
@@ -87,16 +88,16 @@ class AlarmReceiver : BroadcastReceiver() {
             false
         )
 
-        android.util.Log.i(
+        Log.i(
             TAG,
-            "Alarm received: id=$alarmId, title=$title, scheduledAt=$scheduledAt"
+            "Alarm received: id=$alarmId, " +
+                "scheduledAt=$scheduledAt, repeatWeekly=$repeatWeekly"
         )
 
-        // Reschedule first so notification or TTS errors do not
-        // prevent the next weekly occurrence from being created.
+        // Schedule the next occurrence before performing TTS.
         if (repeatWeekly) {
             scheduleNextWeek(
-                context = context,
+                context = context.applicationContext,
                 alarmId = alarmId,
                 notificationId = notificationId,
                 title = title,
@@ -113,7 +114,7 @@ class AlarmReceiver : BroadcastReceiver() {
             body = body
         )
 
-        speak(context, speech)
+        speak(context.applicationContext, speech)
     }
 
     // ============================================================
@@ -124,7 +125,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val speechText = text.trim()
 
         if (speechText.isEmpty()) {
-            android.util.Log.w(TAG, "TTS skipped: empty text")
+            Log.w(TAG, "TTS skipped: empty text")
             return
         }
 
@@ -138,43 +139,52 @@ class AlarmReceiver : BroadcastReceiver() {
                 WAKELOCK_TAG
             )?.apply {
                 setReferenceCounted(false)
-                acquire(WAKELOCK_TIME)
+                acquire(WAKELOCK_TIME_MS)
             }
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Could not acquire wake lock", e)
+            Log.e(TAG, "Could not acquire wake lock", e)
             null
         }
 
         val finished = AtomicBoolean(false)
 
-        fun releaseWakeLock() {
+        fun finish(tts: TextToSpeech?) {
             if (!finished.compareAndSet(false, true)) return
+
+            try {
+                tts?.stop()
+            } catch (_: Exception) {
+            }
+
+            try {
+                tts?.shutdown()
+            } catch (_: Exception) {
+            }
 
             try {
                 if (wakeLock?.isHeld == true) {
                     wakeLock.release()
                 }
             } catch (e: Exception) {
-                android.util.Log.w(TAG, "Wake lock release warning", e)
+                Log.w(TAG, "Wake lock release failed", e)
             }
         }
 
         try {
-            val appContext = context.applicationContext
+            var engine: TextToSpeech? = null
 
-            lateinit var tts: TextToSpeech
+            engine = TextToSpeech(context) { status ->
+                val tts = engine
 
-            tts = TextToSpeech(appContext) { status ->
+                if (tts == null) {
+                    Log.e(TAG, "TTS engine was not available in callback")
+                    finish(null)
+                    return@TextToSpeech
+                }
+
                 if (status != TextToSpeech.SUCCESS) {
-                    android.util.Log.e(
-                        TAG,
-                        "TTS initialization failed: status=$status"
-                    )
-                    try {
-                        tts.shutdown()
-                    } catch (_: Exception) {
-                    }
-                    releaseWakeLock()
+                    Log.e(TAG, "TTS initialization failed: status=$status")
+                    finish(tts)
                     return@TextToSpeech
                 }
 
@@ -201,12 +211,8 @@ class AlarmReceiver : BroadcastReceiver() {
                         languageResult == TextToSpeech.LANG_MISSING_DATA ||
                         languageResult == TextToSpeech.LANG_NOT_SUPPORTED
                     ) {
-                        android.util.Log.e(
-                            TAG,
-                            "No supported TTS language is available"
-                        )
-                        tts.shutdown()
-                        releaseWakeLock()
+                        Log.e(TAG, "No supported TTS language available")
+                        finish(tts)
                         return@TextToSpeech
                     }
 
@@ -227,50 +233,29 @@ class AlarmReceiver : BroadcastReceiver() {
                     tts.setOnUtteranceProgressListener(
                         object : UtteranceProgressListener() {
                             override fun onStart(utteranceId: String?) {
-                                android.util.Log.d(
-                                    TAG,
-                                    "TTS started: $utteranceId"
-                                )
+                                Log.d(TAG, "TTS started: $utteranceId")
                             }
 
                             override fun onDone(utteranceId: String?) {
-                                android.util.Log.d(
-                                    TAG,
-                                    "TTS finished: $utteranceId"
-                                )
-                                try {
-                                    tts.shutdown()
-                                } catch (_: Exception) {
-                                }
-                                releaseWakeLock()
+                                Log.d(TAG, "TTS completed: $utteranceId")
+                                finish(tts)
                             }
 
                             @Deprecated("Deprecated in Java")
                             override fun onError(utteranceId: String?) {
-                                android.util.Log.e(
-                                    TAG,
-                                    "TTS error: $utteranceId"
-                                )
-                                try {
-                                    tts.shutdown()
-                                } catch (_: Exception) {
-                                }
-                                releaseWakeLock()
+                                Log.e(TAG, "TTS error: $utteranceId")
+                                finish(tts)
                             }
 
                             override fun onError(
                                 utteranceId: String?,
                                 errorCode: Int
                             ) {
-                                android.util.Log.e(
+                                Log.e(
                                     TAG,
-                                    "TTS error: id=$utteranceId code=$errorCode"
+                                    "TTS error: id=$utteranceId, code=$errorCode"
                                 )
-                                try {
-                                    tts.shutdown()
-                                } catch (_: Exception) {
-                                }
-                                releaseWakeLock()
+                                finish(tts)
                             }
                         }
                     )
@@ -292,26 +277,19 @@ class AlarmReceiver : BroadcastReceiver() {
                         utteranceId
                     )
 
-                    if (result != TextToSpeech.SUCCESS) {
-                        android.util.Log.e(
-                            TAG,
-                            "tts.speak() failed: result=$result"
-                        )
-                        tts.shutdown()
-                        releaseWakeLock()
+                    if (result == TextToSpeech.ERROR) {
+                        Log.e(TAG, "tts.speak() returned ERROR")
+                        finish(tts)
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e(TAG, "TTS processing failed", e)
-                    try {
-                        tts.shutdown()
-                    } catch (_: Exception) {
-                    }
-                    releaseWakeLock()
+                    Log.e(TAG, "TTS processing failed", e)
+                    finish(tts)
                 }
             }
+
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Could not create TextToSpeech", e)
-            releaseWakeLock()
+            Log.e(TAG, "Could not create TextToSpeech", e)
+            finish(null)
         }
     }
 
@@ -366,9 +344,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle(title)
                 .setContentText(body)
-                .setStyle(
-                    Notification.BigTextStyle().bigText(body)
-                )
+                .setStyle(Notification.BigTextStyle().bigText(body))
                 .setCategory(Notification.CATEGORY_ALARM)
                 .setPriority(Notification.PRIORITY_HIGH)
                 .setAutoCancel(true)
@@ -376,13 +352,9 @@ class AlarmReceiver : BroadcastReceiver() {
                 .build()
 
             manager.notify(notificationId, notification)
-
-            android.util.Log.i(
-                TAG,
-                "Notification displayed: id=$notificationId"
-            )
+            Log.i(TAG, "Notification displayed: id=$notificationId")
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Notification display failed", e)
+            Log.e(TAG, "Notification display failed", e)
         }
     }
 
@@ -403,37 +375,31 @@ class AlarmReceiver : BroadcastReceiver() {
             val alarmManager = context.getSystemService(
                 Context.ALARM_SERVICE
             ) as? AlarmManager ?: run {
-                android.util.Log.e(TAG, "AlarmManager unavailable")
+                Log.e(TAG, "AlarmManager unavailable")
                 return
             }
 
-            val nextTime = scheduledAt + WEEK_MS
-
-            // If the stored schedule is old, advance to the next
-            // future weekly occurrence instead of scheduling in the past.
+            // Advance from the scheduled occurrence, not from the
+            // receiver's current time, to preserve the weekly schedule.
+            var nextTime = scheduledAt + WEEK_MS
             val now = System.currentTimeMillis()
-            var nextScheduledTime = nextTime
 
-            while (nextScheduledTime <= now) {
-                nextScheduledTime += WEEK_MS
+            while (nextTime <= now) {
+                nextTime += WEEK_MS
             }
 
-            val intent = Intent(
+            val nextIntent = Intent(
                 context,
                 AlarmReceiver::class.java
             ).apply {
                 action = "$ACTION_PREFIX$alarmId"
-                setPackage(context.packageName)
 
                 putExtra(EXTRA_ALARM_ID, alarmId)
                 putExtra(EXTRA_NOTIFICATION_ID, notificationId)
                 putExtra(EXTRA_NOTIFICATION_TITLE, title)
                 putExtra(EXTRA_NOTIFICATION_BODY, body)
                 putExtra(EXTRA_SPEECH_TEXT, speech)
-                putExtra(
-                    EXTRA_SCHEDULED_AT_MS,
-                    nextScheduledTime
-                )
+                putExtra(EXTRA_SCHEDULED_AT_MS, nextTime)
                 putExtra(EXTRA_REPEAT_WEEKLY, true)
             }
 
@@ -446,7 +412,7 @@ class AlarmReceiver : BroadcastReceiver() {
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
                 alarmId,
-                intent,
+                nextIntent,
                 flags
             )
 
@@ -454,9 +420,9 @@ class AlarmReceiver : BroadcastReceiver() {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 !alarmManager.canScheduleExactAlarms()
             ) {
-                android.util.Log.e(
+                Log.e(
                     TAG,
-                    "Cannot reschedule: exact alarm permission unavailable"
+                    "Cannot reschedule: exact-alarm permission unavailable"
                 )
                 return
             }
@@ -464,27 +430,23 @@ class AlarmReceiver : BroadcastReceiver() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
-                    nextScheduledTime,
+                    nextTime,
                     pendingIntent
                 )
             } else {
                 alarmManager.setExact(
                     AlarmManager.RTC_WAKEUP,
-                    nextScheduledTime,
+                    nextTime,
                     pendingIntent
                 )
             }
 
-            android.util.Log.i(
+            Log.i(
                 TAG,
-                "Next weekly alarm scheduled: id=$alarmId, time=$nextScheduledTime"
+                "Next weekly alarm scheduled: id=$alarmId, time=$nextTime"
             )
         } catch (e: Exception) {
-            android.util.Log.e(
-                TAG,
-                "Could not schedule next weekly alarm",
-                e
-            )
+            Log.e(TAG, "Could not schedule next weekly alarm", e)
         }
     }
 }
