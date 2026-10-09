@@ -1,4 +1,3 @@
-
 import datetime
 import time
 import traceback
@@ -206,9 +205,12 @@ class FletAlarm:
             intent.putExtra(EXTRA_SPEECH_TEXT, str(speech_text))
 
         if scheduled_at_ms is not None:
+            # Sent as a String: Pyjnius can mis-type large integers
+            # (millisecond timestamps overflow a Java int). The Kotlin
+            # receiver parses this back to a Long.
             intent.putExtra(
                 EXTRA_SCHEDULED_AT_MS,
-                int(scheduled_at_ms),
+                str(int(scheduled_at_ms)),
             )
 
         intent.putExtra(EXTRA_REPEAT_WEEKLY, bool(repeat_weekly))
