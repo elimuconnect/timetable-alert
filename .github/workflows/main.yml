@@ -1,1 +1,214 @@
 
+name: Build Flet App
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_PYTHON: "3.12"
+  SERIOUS_PYTHON_VERSION: "3.12"
+  PYTHONUTF8: "1"
+  FLET_CLI_NO_RICH_OUTPUT: "1"
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: apk
+            runner: ubuntu-latest
+            build_cmd: apk
+            artifact_path: build/apk
+            needs_linux_deps: false
+
+          # Enable after the APK build is confirmed working.
+          # - name: aab
+          #   runner: ubuntu-latest
+          #   build_cmd: aab
+          #   artifact_path: build/aab
+          #   needs_linux_deps: false
+
+    steps:
+      # --------------------------------------------------------
+      # CHECKOUT
+      # --------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # SETUP PYTHON
+      # --------------------------------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # --------------------------------------------------------
+      # SETUP UV
+      # --------------------------------------------------------
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      # --------------------------------------------------------
+      # VERIFY PYTHON AND UV
+      # --------------------------------------------------------
+      - name: Verify Python and uv
+        shell: bash
+        run: |
+          set -e
+          python --version
+          python -c "import sys; print('Python executable:', sys.executable)"
+          uv --version
+          uv run python --version
+
+      # --------------------------------------------------------
+      # INSTALL PROJECT DEPENDENCIES
+      # --------------------------------------------------------
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f pyproject.toml ]; then
+            uv sync --python 3.12
+          elif [ -f requirements.txt ]; then
+            uv pip install --python "$(command -v python)" -r requirements.txt
+          else
+            echo "ERROR: No pyproject.toml or requirements.txt found."
+            exit 1
+          fi
+
+      # --------------------------------------------------------
+      # VERIFY FLET
+      # --------------------------------------------------------
+      - name: Verify Flet installation
+        shell: bash
+        run: |
+          set -e
+          uv run flet --version
+          uv run python -c "import flet; print('Flet module loaded successfully')"
+
+      # --------------------------------------------------------
+      # ACCEPT ANDROID LICENSES
+      # --------------------------------------------------------
+      - name: Accept Android licenses
+        if: matrix.name == 'apk' || matrix.name == 'aab'
+        shell: bash
+        run: |
+          set -e
+
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          else
+            echo "sdkmanager not found at the expected path."
+            echo "Flet may use its own Android SDK setup during the build."
+          fi
+
+      # --------------------------------------------------------
+      # CHECK PYTHON SOURCES
+      # --------------------------------------------------------
+      - name: Compile Python sources
+        shell: bash
+        run: |
+          set -e
+          uv run python -m compileall -q src
+          echo "Python source compilation passed."
+
+      # --------------------------------------------------------
+      # CHECK IMPORTANT APP FILES
+      # --------------------------------------------------------
+      - name: Check project files
+        shell: bash
+        run: |
+          set -e
+
+          test -f pyproject.toml || {
+            echo "ERROR: pyproject.toml not found."
+            exit 1
+          }
+
+          test -f src/main.py || {
+            echo "ERROR: src/main.py not found."
+            exit 1
+          }
+
+          if [ -f src/flet_alarm.py ]; then
+            echo "Found src/flet_alarm.py"
+          elif [ -f flet_alarm.py ]; then
+            echo "Found root flet_alarm.py"
+          else
+            echo "WARNING: flet_alarm.py was not found in expected locations."
+          fi
+
+          if [ -f src/index.html ]; then
+            echo "Found src/index.html"
+          else
+            echo "WARNING: src/index.html not found."
+          fi
+
+          echo "Project file checks completed."
+
+      # --------------------------------------------------------
+      # BUILD ANDROID APK
+      # --------------------------------------------------------
+      - name: Build APK
+        if: matrix.name == 'apk'
+        shell: bash
+        run: |
+          set -e
+          uv run flet build apk --yes --verbose
+
+      # --------------------------------------------------------
+      # BUILD ANDROID APP BUNDLE (WHEN ENABLED)
+      # --------------------------------------------------------
+      - name: Build AAB
+        if: matrix.name == 'aab'
+        shell: bash
+        run: |
+          set -e
+          uv run flet build aab --yes --verbose
+
+      # --------------------------------------------------------
+      # LOCATE BUILD OUTPUT
+      # --------------------------------------------------------
+      - name: Inspect build output
+        shell: bash
+        run: |
+          set -e
+
+          if [ -d "${{ matrix.artifact_path }}" ]; then
+            find "${{ matrix.artifact_path }}" -maxdepth 4 -type f -print
+          elif [ -d build ]; then
+            find build -maxdepth 5 -type f -print
+          else
+            echo "ERROR: No build directory was created."
+            exit 1
+          fi
+
+      # --------------------------------------------------------
+      # UPLOAD BUILD ARTIFACT
+      # --------------------------------------------------------
+      - name: Upload APK or build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-build-artifact
+          path: |
+            ${{ matrix.artifact_path }}/
+            build/**/*.apk
+            build/**/*.aab
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
