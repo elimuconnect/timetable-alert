@@ -1,3 +1,4 @@
+
 import asyncio
 import base64
 import json
@@ -28,10 +29,7 @@ STORAGE_DIR = pathlib.Path(
     )
 )
 
-STORAGE_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 ALERTS_FILE = STORAGE_DIR / "alerts.txt"
 LOG_FILE = STORAGE_DIR / "debug.log"
@@ -43,36 +41,22 @@ LOG_FILE = STORAGE_DIR / "debug.log"
 
 def _log(msg: str):
     try:
-        LOG_FILE.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(
-            LOG_FILE,
-            "a",
-            encoding="utf-8",
-        ) as f:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(
                 f"{datetime.now():%Y-%m-%d %H:%M:%S} "
                 f"{msg}\n"
             )
+            f.flush()
 
     except Exception:
         pass
 
 
 try:
-    _FAULT_FILE = open(
-        LOG_FILE,
-        "a",
-        encoding="utf-8",
-    )
-
-    faulthandler.enable(
-        _FAULT_FILE
-    )
-
+    _FAULT_FILE = open(LOG_FILE, "a", encoding="utf-8")
+    faulthandler.enable(_FAULT_FILE)
 except Exception:
     _FAULT_FILE = None
 
@@ -104,11 +88,7 @@ class SmartAlert:
     )
 
     def __init__(self, page: ft.Page):
-
         self.page = page
-
-        # Python TTS is initialized only when the user
-        # presses the voice-test button.
         self._tts = None
         self._tts_initializing = False
 
@@ -117,16 +97,11 @@ class SmartAlert:
         # ----------------------------------------------------
 
         try:
-            html = (
-                BASE_DIR / "index.html"
-            ).read_text(
+            html = (BASE_DIR / "index.html").read_text(
                 encoding="utf-8"
             )
-
         except Exception as err:
-            _log(
-                f"STARTUP: index.html ERROR: {err!r}"
-            )
+            _log(f"STARTUP: index.html ERROR: {err!r}")
 
             html = """
             <!DOCTYPE html>
@@ -154,13 +129,8 @@ class SmartAlert:
                 background_color=ft.Colors.BLACK,
             )
 
-            self.webview.javascript_channels = [
-                "FletBridge"
-            ]
-
-            self.webview.on_javascript_message = (
-                self.on_message
-            )
+            self.webview.javascript_channels = ["FletBridge"]
+            self.webview.on_javascript_message = self.on_message
 
         except Exception as err:
             _log(
@@ -179,13 +149,9 @@ class SmartAlert:
             self.picker = ft.FilePicker()
 
             try:
-                page.services.append(
-                    self.picker
-                )
+                page.services.append(self.picker)
             except (AttributeError, TypeError):
-                page.overlay.append(
-                    self.picker
-                )
+                page.overlay.append(self.picker)
 
         except Exception:
             _log(
@@ -199,9 +165,7 @@ class SmartAlert:
         # ----------------------------------------------------
 
         page.appbar = ft.AppBar(
-            title=ft.Text(
-                "Timetable Lesson Alert"
-            ),
+            title=ft.Text("Timetable Lesson Alert"),
             center_title=True,
             bgcolor=ft.Colors.BLUE,
             actions=[
@@ -214,107 +178,61 @@ class SmartAlert:
             ],
         )
 
-        page.add(
-            self.webview
-        )
+        page.add(self.webview)
 
-        _log(
-            "STARTUP: UI created successfully"
-        )
+        _log("STARTUP: UI created successfully")
 
-        # ----------------------------------------------------
-        # STARTUP TASKS
-        #
-        # No automatic Python TTS startup.
-        # No Python alarm-intent polling.
-        # Kotlin AlarmReceiver handles scheduled alarms.
-        # ----------------------------------------------------
+        # Kotlin handles scheduled alarms.
+        # Python TTS is initialized only for manual voice tests.
 
-        self._start_task(
-            self.request_permission,
-            "permissions",
-        )
+        self._start_task(self.request_permission, "permissions")
+        self._start_task(self.restore_alarms, "restore_alarms")
+        self._start_task(self.show_last_log, "show_last_log")
 
-        self._start_task(
-            self.restore_alarms,
-            "restore_alarms",
-        )
-
-        self._start_task(
-            self.show_last_log,
-            "show_last_log",
-        )
-
-        _log(
-            "STARTUP: SmartAlert initialized successfully"
-        )
+        _log("STARTUP: SmartAlert initialized successfully")
 
     # ========================================================
     # SAFE BACKGROUND TASKS
     # ========================================================
 
-    def _start_task(
-        self,
-        coroutine_function,
-        task_name: str,
-    ):
+    def _start_task(self, coroutine_function, task_name: str):
         try:
-            task = asyncio.create_task(
-                coroutine_function()
-            )
-
+            task = asyncio.create_task(coroutine_function())
             task.add_done_callback(
-                lambda completed:
-                self._startup_task_done(
+                lambda completed: self._startup_task_done(
                     completed,
                     task_name,
                 )
             )
-
         except Exception:
             _log(
-                f"STARTUP: Could not start {task_name}:\n"
+                f"TASK: Could not start {task_name}:\n"
                 + traceback.format_exc()
             )
 
     @staticmethod
-    def _startup_task_done(
-        task,
-        task_name: str,
-    ):
+    def _startup_task_done(task, task_name: str):
         try:
             task.result()
-
         except asyncio.CancelledError:
-            _log(
-                f"STARTUP: {task_name} cancelled"
-            )
-
+            _log(f"TASK: {task_name} cancelled")
         except Exception as err:
             _log(
-                f"STARTUP: {task_name} FAILED: {err!r}\n"
+                f"TASK: {task_name} FAILED: {err!r}\n"
                 + traceback.format_exc()
             )
 
     def _on_test_clicked(self, _):
-        self._start_task(
-            self.test_notification,
-            "test_notification",
-        )
+        self._start_task(self.test_notification, "test_notification")
 
     # ========================================================
     # PYTHON TTS - MANUAL TEST ONLY
     # ========================================================
 
     async def initialize_tts(self):
-
         if (
             self._tts is not None
-            and getattr(
-                self._tts,
-                "ready",
-                False,
-            )
+            and getattr(self._tts, "ready", False)
         ):
             return True
 
@@ -324,16 +242,8 @@ class SmartAlert:
         self._tts_initializing = True
 
         try:
-            _log(
-                "TTS: creating engine for manual test"
-            )
-
+            _log("TTS: creating engine for manual test")
             self._tts = tts.TTS()
-
-            _log(
-                "TTS: engine created; context="
-                f"{getattr(self._tts, 'context_source', 'unknown')}"
-            )
 
             ready = await asyncio.to_thread(
                 self._tts.wait_ready,
@@ -353,7 +263,6 @@ class SmartAlert:
                 f"TTS: initialization ERROR: {err!r}\n"
                 + traceback.format_exc()
             )
-
             self._tts = None
             return False
 
@@ -361,14 +270,9 @@ class SmartAlert:
             self._tts_initializing = False
 
     async def _ensure_tts_ready(self):
-
         if (
             self._tts is not None
-            and getattr(
-                self._tts,
-                "ready",
-                False,
-            )
+            and getattr(self._tts, "ready", False)
         ):
             return True
 
@@ -378,63 +282,27 @@ class SmartAlert:
 
                 if (
                     self._tts is not None
-                    and getattr(
-                        self._tts,
-                        "ready",
-                        False,
-                    )
+                    and getattr(self._tts, "ready", False)
                 ):
                     return True
 
                 if not self._tts_initializing:
                     break
 
-        if (
-            self._tts is None
-            or not getattr(
-                self._tts,
-                "ready",
-                False,
-            )
-        ):
-            return await self.initialize_tts()
+        return await self.initialize_tts()
 
-        return True
-
-    def _speak_alert(
-        self,
-        spoken: str,
-    ) -> bool:
-
+    def _speak_alert(self, spoken: str) -> bool:
         try:
-            spoken = str(
-                spoken or ""
-            ).strip()
+            spoken = str(spoken or "").strip()
 
-            if not spoken:
-                _log("TTS: empty speech text")
+            if not spoken or self._tts is None:
                 return False
 
-            if self._tts is None:
-                _log("TTS: engine unavailable")
+            if not getattr(self._tts, "ready", False):
                 return False
 
-            if not getattr(
-                self._tts,
-                "ready",
-                False,
-            ):
-                _log("TTS: engine not ready")
-                return False
-
-            result = self._tts.speak(
-                spoken
-            )
-
-            _log(
-                f"TTS: speak returned {result!r}"
-            )
-
+            result = self._tts.speak(spoken)
+            _log(f"TTS: speak returned {result!r}")
             return bool(result)
 
         except Exception as err:
@@ -449,22 +317,15 @@ class SmartAlert:
     # ========================================================
 
     def on_message(self, e):
-
         try:
             body = e.message_body
-
-            if isinstance(
-                body,
-                (str, bytes, bytearray),
-            ):
+            if isinstance(body, (str, bytes, bytearray)):
                 data = json.loads(body)
             else:
                 data = body
 
         except (ValueError, TypeError) as err:
-            _log(
-                f"WEBVIEW: invalid message: {err!r}"
-            )
+            _log(f"WEBVIEW: invalid message: {err!r}")
             self._toast(
                 "Could not read the message from the timetable.",
                 ok=False,
@@ -475,84 +336,57 @@ class SmartAlert:
             isinstance(data, dict)
             and data.get("action") == "pick_docx"
         ):
-            self._start_task(
-                self.pick_docx,
-                "pick_docx",
-            )
+            self._start_task(self.pick_docx, "pick_docx")
             return
 
         try:
-            lessons = self._parse_payload(
-                data
-            )
-
-            scheduled, skipped = (
-                self.sync_timetable(
-                    lessons
-                )
-            )
+            lessons = self._parse_payload(data)
+            scheduled, skipped = self.sync_timetable(lessons)
 
         except Exception as err:
             _log(
                 f"TIMETABLE: processing ERROR: {err!r}\n"
                 + traceback.format_exc()
             )
-
             self._toast(
-                "Could not process the timetable. "
-                "Check the debug log.",
+                "Could not process the timetable. Check debug.log.",
                 ok=False,
             )
             return
 
         if scheduled == 0 and skipped:
             self._toast(
-                "No valid lessons found. "
-                "Existing alerts were left unchanged.",
+                "No valid lessons scheduled. "
+                "Existing alerts were retained where possible.",
                 ok=False,
             )
-
         elif skipped:
             self._toast(
-                f"{scheduled} lesson alerts set, "
-                f"{skipped} skipped.",
-                ok=(scheduled > 0),
+                f"{scheduled} lesson alerts set, {skipped} skipped.",
+                ok=scheduled > 0,
             )
-
         else:
             self._toast(
                 f"{scheduled} lesson alerts set.",
-                ok=(scheduled > 0),
+                ok=scheduled > 0,
             )
 
     @staticmethod
     def _parse_payload(data) -> list:
-
         if isinstance(data, dict):
-            for key in (
-                "lessons",
-                "timetable",
-                "table",
-                "data",
-            ):
-                if isinstance(
-                    data.get(key),
-                    list,
-                ):
+            for key in ("lessons", "timetable", "table", "data"):
+                if isinstance(data.get(key), list):
                     return data[key]
-
             return [data]
 
         if isinstance(data, list):
             return data
 
         raise TypeError(
-            "Unsupported payload type: "
-            f"{type(data).__name__}"
+            f"Unsupported payload type: {type(data).__name__}"
         )
 
     async def pick_docx(self):
-
         try:
             files = await self.picker.pick_files(
                 allow_multiple=False,
@@ -564,30 +398,13 @@ class SmartAlert:
                 return
 
             selected = files[0]
+            data = getattr(selected, "bytes", None)
 
-            data = getattr(
-                selected,
-                "bytes",
-                None,
-            )
-
-            if (
-                not data
-                and getattr(
-                    selected,
-                    "path",
-                    None,
-                )
-            ):
+            if not data and getattr(selected, "path", None):
                 try:
-                    data = pathlib.Path(
-                        selected.path
-                    ).read_bytes()
-
+                    data = pathlib.Path(selected.path).read_bytes()
                 except Exception as err:
-                    _log(
-                        f"FILE: path read ERROR: {err!r}"
-                    )
+                    _log(f"FILE: path read ERROR: {err!r}")
 
             if not data:
                 self._toast(
@@ -596,9 +413,7 @@ class SmartAlert:
                 )
                 return
 
-            b64 = base64.b64encode(
-                data
-            ).decode("ascii")
+            b64 = base64.b64encode(data).decode("ascii")
 
             await self.webview.run_javascript(
                 "receiveDocx("
@@ -607,16 +422,13 @@ class SmartAlert:
                 ")"
             )
 
-            _log(
-                f"FILE: DOCX delivered: {selected.name}"
-            )
+            _log(f"FILE: DOCX delivered: {selected.name}")
 
         except Exception as err:
             _log(
                 f"FILE: picker ERROR: {err!r}\n"
                 + traceback.format_exc()
             )
-
             self._toast(
                 f"File selection failed: {err}",
                 ok=False,
@@ -626,41 +438,83 @@ class SmartAlert:
     # TIMETABLE -> ANDROID ALARMS
     # ========================================================
 
-    def sync_timetable(
-        self,
-        lessons: list,
-    ) -> tuple[int, int]:
+    def sync_timetable(self, lessons: list) -> tuple[int, int]:
+        """
+        Validate the new timetable before changing existing alarms.
 
+        New alarms are registered before old alarms are cancelled.
+        If registration fails, cancel the new alarms and retain
+        the previous timetable as far as possible.
+        """
+
+        if not isinstance(lessons, list):
+            _log("TIMETABLE: payload is not a list")
+            return 0, 1
+
+        if not lessons:
+            _log(
+                "TIMETABLE: empty timetable rejected; "
+                "existing alarms retained"
+            )
+            return 0, 1
+
+        old_records = self._load_records()
         records = []
         skipped = 0
 
+        # Build records without changing existing alarms.
         for lesson in lessons:
-            record = self._build_record(
-                lesson,
-                len(records) + 1,
-            )
+            try:
+                record = self._build_record(
+                    lesson,
+                    len(records) + 1,
+                )
 
-            if record is None:
+                if record is None:
+                    skipped += 1
+                else:
+                    records.append(record)
+
+            except Exception as err:
                 skipped += 1
-            else:
-                records.append(record)
+                _log(
+                    f"TIMETABLE: parsing failed: {err!r}\n"
+                    + traceback.format_exc()
+                )
 
-        if lessons and not records:
+        if not records:
+            _log(
+                "TIMETABLE: no valid lessons; "
+                "existing timetable retained"
+            )
             return 0, skipped
 
-        old_records = self._load_records()
+        # Allocate IDs that do not conflict with saved alarms.
+        # Android PendingIntents often use IDs to identify alarms.
+        existing_ids = {
+            int(record["id"])
+            for record in old_records
+        }
 
-        # Cancel old alarms before replacing the timetable.
-        for old in old_records:
-            self._cancel_alarm(
-                old["id"]
-            )
+        base_id = int(datetime.now().timestamp()) % 1_000_000_000
 
-        self._save_records(
-            records
-        )
+        for index, record in enumerate(records):
+            candidate = (base_id + index + 1) % 2_000_000_000
 
-        successful = 0
+            if candidate <= 0:
+                candidate = index + 1
+
+            while candidate in existing_ids:
+                candidate = (candidate + 1) % 2_000_000_000
+
+                if candidate <= 0:
+                    candidate = 1
+
+            record["id"] = candidate
+            existing_ids.add(candidate)
+
+        # Register all new alarms before cancelling the old ones.
+        successfully_scheduled = []
 
         for record in records:
             try:
@@ -672,23 +526,57 @@ class SmartAlert:
                     record.get("speech", ""),
                 )
 
-                successful += 1
+                successfully_scheduled.append(record)
 
             except Exception as err:
                 _log(
-                    f"ALARM: scheduling id={record['id']} "
-                    f"FAILED: {err!r}\n"
+                    f"TIMETABLE: scheduling failed "
+                    f"id={record['id']}: {err!r}\n"
                     + traceback.format_exc()
                 )
+                break
 
-        return successful, skipped
+        # Do not replace the saved timetable if registration fails.
+        if len(successfully_scheduled) != len(records):
+            for record in successfully_scheduled:
+                self._cancel_alarm(record["id"])
 
-    def _build_record(
-        self,
-        lesson,
-        nt_id: int,
-    ):
+            _log(
+                "TIMETABLE: replacement aborted; "
+                "previous saved timetable retained"
+            )
+            return 0, skipped + 1
 
+        # Save new records to a temporary file and replace atomically.
+        if not self._save_records(records):
+            for record in successfully_scheduled:
+                self._cancel_alarm(record["id"])
+
+            _log(
+                "TIMETABLE: saving failed; "
+                "new alarms cancelled"
+            )
+            return 0, skipped + 1
+
+        # New alarms are now registered and saved.
+        # Cancel previous alarms only after successful replacement.
+        new_ids = {
+            int(record["id"])
+            for record in records
+        }
+
+        for old in old_records:
+            if int(old["id"]) not in new_ids:
+                self._cancel_alarm(old["id"])
+
+        _log(
+            f"TIMETABLE: replacement complete; "
+            f"scheduled={len(records)}, skipped={skipped}"
+        )
+
+        return len(records), skipped
+
+    def _build_record(self, lesson, nt_id: int):
         if not isinstance(lesson, dict):
             return None
 
@@ -697,17 +585,11 @@ class SmartAlert:
             for k, v in lesson.items()
         }
 
-        day = self._parse_day(
-            row.get("day")
-        )
-
-        start = self._parse_start_time(
-            row.get("time")
-        )
+        day = self._parse_day(row.get("day"))
+        start = self._parse_start_time(row.get("time"))
 
         subject = self._clean(
-            row.get("lesson")
-            or row.get("subject")
+            row.get("lesson") or row.get("subject")
         )
 
         if day is None or start is None or not subject:
@@ -717,35 +599,21 @@ class SmartAlert:
             return None
 
         grade = self._clean(
-            row.get("class")
-            or row.get("grade")
+            row.get("class") or row.get("grade")
         )
-
-        speech = self._clean(
-            row.get("speech")
-        )
+        speech = self._clean(row.get("speech"))
 
         reminder = self._to_int(
             row.get("reminder"),
             self.DEFAULT_REMINDER_MINUTES,
         )
+        reminder = max(0, min(reminder, 1440))
 
-        reminder = max(
-            0,
-            min(reminder, 1440),
-        )
-
-        class_time = self._next_weekday(
-            day,
-            start,
-        )
+        class_time = self._next_weekday(day, start)
 
         return {
             "id": nt_id,
-            "time": self._alarm_time(
-                class_time,
-                reminder,
-            ),
+            "time": self._alarm_time(class_time, reminder),
             "class_time": class_time,
             "reminder_before": reminder,
             "subject": subject,
@@ -768,44 +636,22 @@ class SmartAlert:
         )
 
     @staticmethod
-    def _to_int(
-        value,
-        default: int,
-    ) -> int:
-
+    def _to_int(value, default: int) -> int:
         try:
             text = str(value).strip()
 
             if not text:
                 return default
 
-            n = int(
-                text.split()[0]
-            )
-
+            n = int(text.split()[0])
             return n if n >= 0 else default
 
-        except (
-            ValueError,
-            IndexError,
-            TypeError,
-        ):
+        except (ValueError, IndexError, TypeError):
             return default
 
-    def _parse_day(
-        self,
-        value,
-    ) -> int | None:
-
-        text = str(
-            value or ""
-        ).strip().lower()
-
-        text = re.sub(
-            r"[^a-z]",
-            "",
-            text,
-        )
+    def _parse_day(self, value) -> int | None:
+        text = str(value or "").strip().lower()
+        text = re.sub(r"[^a-z]", "", text)
 
         if len(text) < 2:
             return None
@@ -821,31 +667,20 @@ class SmartAlert:
 
         return None
 
-    def _parse_start_time(
-        self,
-        value,
-    ) -> time | None:
-
-        text = str(
-            value or ""
-        ).strip()
+    def _parse_start_time(self, value) -> time | None:
+        text = str(value or "").strip()
 
         if not text:
             return None
 
         start = re.split(
-            r"\s*[-\u2013\u2014]\s*"
-            r"|\s+to\s+",
+            r"\s*[-\u2013\u2014]\s*|\s+to\s+",
             text,
             maxsplit=1,
             flags=re.I,
         )[0].strip()
 
-        start = re.sub(
-            r"\s+",
-            " ",
-            start,
-        ).strip()
+        start = re.sub(r"\s+", " ", start).strip()
 
         for fmt in self.TIME_FORMATS:
             try:
@@ -853,38 +688,25 @@ class SmartAlert:
                     start.upper(),
                     fmt,
                 ).time()
-
             except ValueError:
                 continue
 
-        match = re.fullmatch(
-            r"(\d{1,2})[:.](\d{2})",
-            start,
-        )
+        match = re.fullmatch(r"(\d{1,2})[:.](\d{2})", start)
 
         if match:
             hour = int(match.group(1))
             minute = int(match.group(2))
 
-            if (
-                0 <= hour <= 23
-                and 0 <= minute <= 59
-            ):
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return time(hour, minute)
 
         return None
 
     @staticmethod
-    def _next_weekday(
-        day_index: int,
-        start: time,
-    ) -> datetime:
-
+    def _next_weekday(day_index: int, start: time) -> datetime:
         now = datetime.now()
 
-        ahead = (
-            day_index - now.weekday()
-        ) % 7
+        ahead = (day_index - now.weekday()) % 7
 
         candidate = datetime.combine(
             now.date() + timedelta(days=ahead),
@@ -897,14 +719,8 @@ class SmartAlert:
         return candidate
 
     @staticmethod
-    def _alarm_time(
-        class_time: datetime,
-        reminder: int,
-    ) -> datetime:
-
-        alarm = class_time - timedelta(
-            minutes=reminder
-        )
+    def _alarm_time(class_time: datetime, reminder: int) -> datetime:
+        alarm = class_time - timedelta(minutes=reminder)
 
         if alarm <= datetime.now():
             return class_time
@@ -912,10 +728,7 @@ class SmartAlert:
         return alarm
 
     @staticmethod
-    def _next_future(
-        value: datetime,
-    ) -> datetime:
-
+    def _next_future(value: datetime) -> datetime:
         now = datetime.now()
 
         while value <= now:
@@ -928,7 +741,6 @@ class SmartAlert:
     # ========================================================
 
     def _load_records(self) -> list[dict]:
-
         records = []
 
         if not ALERTS_FILE.exists():
@@ -938,11 +750,8 @@ class SmartAlert:
             lines = ALERTS_FILE.read_text(
                 encoding="utf-8"
             ).splitlines()
-
         except Exception as err:
-            _log(
-                f"STORAGE: read ERROR: {err!r}"
-            )
+            _log(f"STORAGE: read ERROR: {err!r}")
             return records
 
         for line in lines:
@@ -963,15 +772,7 @@ class SmartAlert:
                     )
                     continue
 
-                (
-                    id_,
-                    alarm,
-                    klass,
-                    rem,
-                    subject,
-                    grade,
-                    speech,
-                ) = parts
+                id_, alarm, klass, rem, subject, grade, speech = parts
 
                 records.append({
                     "id": int(id_),
@@ -983,18 +784,14 @@ class SmartAlert:
                     "speech": speech,
                 })
 
-            except (
-                ValueError,
-                TypeError,
-            ) as err:
+            except (ValueError, TypeError) as err:
                 _log(
                     f"STORAGE: invalid entry: {line!r}: {err!r}"
                 )
 
         return records
 
-    def _save_records(self, records):
-
+    def _save_records(self, records) -> bool:
         try:
             ALERTS_FILE.parent.mkdir(
                 parents=True,
@@ -1003,11 +800,7 @@ class SmartAlert:
 
             temp_file = ALERTS_FILE.with_suffix(".tmp")
 
-            with open(
-                temp_file,
-                "w",
-                encoding="utf-8",
-            ) as f:
+            with open(temp_file, "w", encoding="utf-8") as f:
                 for record in records:
                     f.write(
                         f"{record['id']}|"
@@ -1019,15 +812,19 @@ class SmartAlert:
                         f"{record.get('speech', '')}\n"
                     )
 
-            temp_file.replace(
-                ALERTS_FILE
-            )
+                f.flush()
+                os.fsync(f.fileno())
+
+            temp_file.replace(ALERTS_FILE)
+            _log(f"STORAGE: saved {len(records)} records")
+            return True
 
         except Exception as err:
             _log(
                 f"STORAGE: write ERROR: {err!r}\n"
                 + traceback.format_exc()
             )
+            return False
 
     # ========================================================
     # ANDROID ALARMS
@@ -1041,18 +838,11 @@ class SmartAlert:
         grade: str,
         speech: str = "",
     ):
-
         from flet_alarm import FletAlarm
 
-        suffix = (
-            f" for {grade}"
-            if grade
-            else ""
-        )
+        suffix = f" for {grade}" if grade else ""
 
-        speech_text = str(
-            speech or ""
-        ).strip()
+        speech_text = str(speech or "").strip()
 
         if not speech_text:
             speech_text = (
@@ -1066,17 +856,21 @@ class SmartAlert:
             + (f", grade {grade}" if grade else "")
         )
 
-        message = (
-            f"Your {subject} class{suffix} is ready."
-        )
+        message = f"Your {subject} class{suffix} is ready."
+
+        if not isinstance(when, datetime):
+            raise TypeError("Alarm time must be a datetime")
+
+        if when <= datetime.now():
+            raise ValueError(
+                f"Refusing to schedule a past alarm: {when.isoformat()}"
+            )
 
         _log(
-            f"ALARM: scheduling id={nt_id}; "
+            f"ALARM: registering id={nt_id}; "
             f"time={when.isoformat()}"
         )
 
-        # Native Kotlin receiver handles the scheduled
-        # notification, speech, and weekly recurrence.
         FletAlarm().set_alarm(
             when,
             nt_id,
@@ -1086,25 +880,14 @@ class SmartAlert:
             repeat_weekly=True,
         )
 
-        _log(
-            f"ALARM: scheduled successfully id={nt_id}"
-        )
+        _log(f"ALARM: registered id={nt_id}")
 
-    def _cancel_alarm(
-        self,
-        nt_id: int,
-    ):
-
+    def _cancel_alarm(self, nt_id: int):
         try:
             from flet_alarm import FletAlarm
 
-            FletAlarm().cancel_alarm(
-                nt_id
-            )
-
-            _log(
-                f"ALARM: cancelled id={nt_id}"
-            )
+            FletAlarm().cancel_alarm(nt_id)
+            _log(f"ALARM: cancelled id={nt_id}")
 
         except Exception as err:
             _log(
@@ -1113,12 +896,7 @@ class SmartAlert:
 
         # Clean up notifications created by older app versions.
         try:
-            Notification(
-                id=nt_id
-            ).cancel(
-                nt_id
-            )
-
+            Notification(id=nt_id).cancel(nt_id)
         except Exception as err:
             _log(
                 f"NOTIFICATION: cancel ERROR: {err!r}"
@@ -1135,7 +913,6 @@ class SmartAlert:
         body: str,
         custom_sound: bool = False,
     ):
-
         notif = Notification(
             id=nt_id,
             title=title,
@@ -1148,17 +925,11 @@ class SmartAlert:
             pass
 
         if custom_sound:
-            sound_path = (
-                BASE_DIR
-                / "assets"
-                / "alarmsound.mp3"
-            )
+            sound_path = BASE_DIR / "assets" / "alarmsound.mp3"
 
             if sound_path.exists():
                 try:
-                    notif.setSound(
-                        sound_path=str(sound_path)
-                    )
+                    notif.setSound(sound_path=str(sound_path))
                 except Exception as err:
                     _log(
                         f"NOTIFICATION: sound ERROR: {err!r}"
@@ -1167,25 +938,15 @@ class SmartAlert:
         return notif
 
     @staticmethod
-    def _send_notification(
-        notif,
-        body: str,
-    ) -> bool:
-
+    def _send_notification(notif, body: str) -> bool:
         try:
             try:
                 notif.setBigText(body)
             except Exception:
                 pass
 
-            result = notif.send(
-                silent=False
-            )
-
-            _log(
-                f"NOTIFICATION: send returned {result!r}"
-            )
-
+            result = notif.send(silent=False)
+            _log(f"NOTIFICATION: send returned {result!r}")
             return True
 
         except Exception as err:
@@ -1199,12 +960,7 @@ class SmartAlert:
     # TOAST
     # ========================================================
 
-    def _toast(
-        self,
-        message: str,
-        ok: bool = True,
-    ):
-
+    def _toast(self, message: str, ok: bool = True):
         try:
             self.page.show_dialog(
                 ft.SnackBar(
@@ -1216,48 +972,42 @@ class SmartAlert:
                     ),
                 )
             )
-
         except Exception as err:
-            _log(
-                f"UI: toast ERROR: {err!r}"
-            )
+            _log(f"UI: toast ERROR: {err!r}")
 
     # ========================================================
     # RESTORE ALARMS
     # ========================================================
 
     async def restore_alarms(self):
-
         try:
             records = self._load_records()
 
             if not records:
-                _log(
-                    "RESTORE: no saved alarms"
-                )
+                _log("RESTORE: no saved alarms")
                 return
 
             changed = False
 
             for record in records:
-                class_time = self._next_future(
-                    record["class_time"]
-                )
-
-                alarm = self._alarm_time(
-                    class_time,
-                    record["reminder_before"],
-                )
-
-                if (
-                    class_time != record["class_time"]
-                    or alarm != record["time"]
-                ):
-                    record["class_time"] = class_time
-                    record["time"] = alarm
-                    changed = True
-
                 try:
+                    class_time = self._next_future(
+                        record["class_time"]
+                    )
+
+                    alarm = self._alarm_time(
+                        class_time,
+                        record["reminder_before"],
+                    )
+
+                    if (
+                        class_time != record["class_time"]
+                        or alarm != record["time"]
+                    ):
+                        record["class_time"] = class_time
+                        record["time"] = alarm
+                        changed = True
+
                     self._schedule_alarm(
                         record["id"],
                         alarm,
@@ -1268,7 +1018,7 @@ class SmartAlert:
 
                 except Exception as err:
                     _log(
-                        f"RESTORE: alarm {record['id']} "
+                        f"RESTORE: alarm {record.get('id')} "
                         f"ERROR: {err!r}\n"
                         + traceback.format_exc()
                     )
@@ -1291,8 +1041,6 @@ class SmartAlert:
     # ========================================================
 
     async def show_last_log(self):
-
-        # Allow the UI time to render before opening a dialog.
         await asyncio.sleep(2)
 
         try:
@@ -1342,7 +1090,6 @@ class SmartAlert:
     # ========================================================
 
     def close_dialog(self):
-
         try:
             self.page.pop_dialog()
         except Exception:
@@ -1358,7 +1105,6 @@ class SmartAlert:
     # ========================================================
 
     async def test_notification(self):
-
         body = "If you see this, notifications are working!"
 
         try:
@@ -1380,33 +1126,23 @@ class SmartAlert:
                 ok=sent,
             )
 
-            # Run the voice test only after the user taps
-            # the test button, never during startup.
-            self._start_task(
-                self.test_voice,
-                "test_voice",
-            )
+            self._start_task(self.test_voice, "test_voice")
 
         except Exception as err:
             _log(
                 f"TEST: notification ERROR: {err!r}\n"
                 + traceback.format_exc()
             )
-
             self._toast(
                 f"Error sending test notification: {err}",
                 ok=False,
             )
 
     async def test_voice(self):
-
         await asyncio.sleep(1)
 
         try:
-            _log(
-                "TEST TTS: starting"
-            )
-
+            _log("TEST TTS: starting")
             ready = await self._ensure_tts_ready()
 
             if ready:
@@ -1427,7 +1163,6 @@ class SmartAlert:
                         f"Status: {getattr(self._tts, 'status', None)}\n"
                         f"Error: {getattr(self._tts, 'error', None)}"
                     )
-
             else:
                 result = (
                     "TTS NOT READY.\n\n"
@@ -1437,16 +1172,11 @@ class SmartAlert:
                     f"{getattr(self._tts, 'context_source', 'unknown')}"
                 )
 
-            _log(
-                f"TEST TTS: {result}"
-            )
+            _log(f"TEST TTS: {result}")
 
         except Exception as err:
             result = f"TTS TEST ERROR: {err!r}"
-
-            _log(
-                f"{result}\n{traceback.format_exc()}"
-            )
+            _log(f"{result}\n{traceback.format_exc()}")
 
         try:
             self.page.show_dialog(
@@ -1464,18 +1194,14 @@ class SmartAlert:
                     ],
                 )
             )
-
         except Exception as err:
-            _log(
-                f"TEST TTS: dialog ERROR: {err!r}"
-            )
+            _log(f"TEST TTS: dialog ERROR: {err!r}")
 
     # ========================================================
     # PERMISSIONS
     # ========================================================
 
     async def request_permission(self):
-
         try:
             ph = fph.PermissionHandler()
 
@@ -1498,9 +1224,7 @@ class SmartAlert:
                 try:
                     result = await ph.request(permission)
 
-                    _log(
-                        f"PERMISSION: {label}: {result!r}"
-                    )
+                    _log(f"PERMISSION: {label}: {result!r}")
 
                     if (
                         result is not None
@@ -1517,20 +1241,17 @@ class SmartAlert:
                         f"PERMISSION: {label} request ERROR: {err!r}"
                     )
 
-            # This permission is optional and can vary by Android version.
             try:
                 await ph.request(
                     fph.Permission.IGNORE_BATTERY_OPTIMIZATIONS
                 )
             except Exception as err:
                 _log(
-                    f"PERMISSION: battery optimization request "
+                    "PERMISSION: battery optimization request "
                     f"ERROR: {err!r}"
                 )
 
-            _log(
-                "PERMISSION: requests completed"
-            )
+            _log("PERMISSION: requests completed")
 
         except Exception as err:
             _log(
@@ -1544,10 +1265,8 @@ class SmartAlert:
 # ============================================================
 
 def main(page: ft.Page):
-
     try:
         page.title = "Smart Timetable Lesson Alert"
-
         SmartAlert(page)
 
     except Exception as err:
