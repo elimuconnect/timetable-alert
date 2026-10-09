@@ -10,7 +10,6 @@ from jnius import autoclass, cast
 # ============================================================
 
 RECEIVER_CLASS = "org.digielimu.classalert.AlarmReceiver"
-
 ACTION_PREFIX = "com.zaimtech.CLASS_ALERT_ALARM_"
 
 EXTRA_ALARM_ID = "alarm_id"
@@ -24,39 +23,9 @@ EXTRA_REPEAT_WEEKLY = "repeat_weekly"
 
 def _log(message):
     try:
-        print(f"[FletAlarm] {message}")
+        print(f"[FletAlarm] {message}", flush=True)
     except Exception:
         pass
-
-
-# ============================================================
-# ACTIVITY DISCOVERY
-# ============================================================
-
-def _get_activity(autoclass_func):
-    """
-    Resolve the current Android Activity only when needed.
-    """
-
-    candidates = (
-        "org.flet.android.PythonActivity",
-        "org.flet.app.FletActivity",
-        "org.kivy.android.PythonActivity",
-        "org.renpy.android.PythonActivity",
-    )
-
-    for class_name in candidates:
-        try:
-            activity_class = autoclass_func(class_name)
-            activity = getattr(activity_class, "mActivity", None)
-
-            if activity is not None:
-                return activity
-
-        except Exception as exc:
-            _log(f"Activity candidate unavailable: {class_name}: {exc}")
-
-    return None
 
 
 # ============================================================
@@ -66,8 +35,13 @@ def _get_activity(autoclass_func):
 class FletAlarm:
 
     def __init__(self):
-        # Importing flet_alarm.py no longer loads Android classes.
-        # Java resolution happens only when FletAlarm is instantiated.
+        """
+        Obtain Android's application context without probing
+        unknown Activity class names.
+
+        This avoids the native process abort caused by trying
+        to autoclass() unsupported Activity classes.
+        """
 
         try:
             self.Build = autoclass("android.os.Build")
@@ -83,39 +57,56 @@ class FletAlarm:
                 "android.provider.Settings"
             )
             self.Uri = autoclass("android.net.Uri")
-
-        except Exception as exc:
-            _log(f"Android system class loading failed: {exc}")
-            raise RuntimeError(
-                "Could not load required Android system classes."
-            ) from exc
-
-        self.activity = _get_activity(autoclass)
-
-        if self.activity is None:
-            raise RuntimeError(
-                "Could not find the current Android Activity."
+            self.ActivityThread = autoclass(
+                "android.app.ActivityThread"
+            )
+            self.NotificationManager = autoclass(
+                "android.app.NotificationManager"
             )
 
-        self.context = self.activity.getApplicationContext()
+            application = self.ActivityThread.currentApplication()
 
-        self.package_name = str(self.context.getPackageName())
-        self.sdk = int(self.Build.VERSION.SDK_INT)
+            if application is None:
+                raise RuntimeError(
+                    "Android application context is unavailable."
+                )
 
-        self.alarm_manager = cast(
-            "android.app.AlarmManager",
-            self.context.getSystemService(
-                self.Context.ALARM_SERVICE
-            ),
-        )
+            self.context = cast(
+                "android.content.Context",
+                application.getApplicationContext(),
+            )
 
-        if self.alarm_manager is None:
-            raise RuntimeError("Android AlarmManager is unavailable.")
+            if self.context is None:
+                raise RuntimeError(
+                    "Could not obtain Android application context."
+                )
 
-        _log(
-            f"Initialized: package={self.package_name}, "
-            f"sdk={self.sdk}"
-        )
+            self.package_name = str(self.context.getPackageName())
+            self.sdk = int(self.Build.VERSION.SDK_INT)
+
+            self.alarm_manager = cast(
+                "android.app.AlarmManager",
+                self.context.getSystemService(
+                    self.Context.ALARM_SERVICE
+                ),
+            )
+
+            if self.alarm_manager is None:
+                raise RuntimeError(
+                    "Android AlarmManager is unavailable."
+                )
+
+            _log(
+                f"Initialized successfully: "
+                f"package={self.package_name}, sdk={self.sdk}"
+            )
+
+        except Exception as exc:
+            _log(f"INITIALIZATION FAILED: {exc}")
+            raise RuntimeError(
+                "Could not initialize Android alarm services. "
+                "Check Pyjnius and Android application-context access."
+            ) from exc
 
     # ========================================================
     # EXACT ALARM PERMISSION
@@ -143,12 +134,16 @@ class FletAlarm:
             )
 
             intent.setData(
-                self.Uri.parse(
-                    f"package:{self.package_name}"
-                )
+                self.Uri.parse(f"package:{self.package_name}")
             )
 
-            self.activity.startActivity(intent)
+            # Application context requires this flag when starting
+            # an Activity outside an existing Activity context.
+            intent.addFlags(
+                int(self.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+
+            self.context.startActivity(intent)
             return True
 
         except Exception as exc:
@@ -159,11 +154,7 @@ class FletAlarm:
     # PENDING INTENT FLAGS
     # ========================================================
 
-    def _pending_intent_flags(
-        self,
-        update=False,
-        no_create=False,
-    ):
+    def _pending_intent_flags(self, update=False, no_create=False):
         flags = 0
 
         if self.sdk >= 23:
@@ -192,13 +183,8 @@ class FletAlarm:
     ):
         alarm_id = int(alarm_id)
 
-        # Avoid autoclass("org.digielimu.classalert.AlarmReceiver").
-        # Resolve the receiver by its fully qualified class name.
         intent = self.Intent()
-        intent.setClassName(
-            self.context,
-            RECEIVER_CLASS,
-        )
+        intent.setClassName(self.context, RECEIVER_CLASS)
         intent.setAction(f"{ACTION_PREFIX}{alarm_id}")
 
         intent.putExtra(EXTRA_ALARM_ID, alarm_id)
@@ -257,7 +243,7 @@ class FletAlarm:
         )
 
     # ========================================================
-    # SCHEDULE
+    # SCHEDULE ALARM
     # ========================================================
 
     def set_alarm(
@@ -269,6 +255,8 @@ class FletAlarm:
         speech_text="",
         repeat_weekly=True,
     ):
+        alarm_label = alarm_id
+
         try:
             if not isinstance(scheduled_time, datetime.datetime):
                 raise TypeError(
@@ -276,10 +264,14 @@ class FletAlarm:
                 )
 
             alarm_id = int(alarm_id)
+            alarm_label = alarm_id
 
             if alarm_id <= 0:
-                raise ValueError("alarm_id must be greater than zero")
+                raise ValueError(
+                    "alarm_id must be greater than zero"
+                )
 
+            # Convert the supplied datetime to Unix milliseconds.
             trigger_ms = int(scheduled_time.timestamp() * 1000)
 
             if trigger_ms <= int(time.time() * 1000):
@@ -289,8 +281,8 @@ class FletAlarm:
 
             if not self.can_schedule_exact_alarms():
                 raise PermissionError(
-                    "Exact alarms are disabled. Enable exact alarm "
-                    "permission in Android settings."
+                    "Exact alarms are disabled. Enable the app's "
+                    "exact-alarm permission in Android settings."
                 )
 
             pending_intent = self._get_pending_intent(
@@ -304,8 +296,11 @@ class FletAlarm:
             )
 
             if pending_intent is None:
-                raise RuntimeError("Could not create PendingIntent")
+                raise RuntimeError(
+                    "Android could not create the PendingIntent."
+                )
 
+            # Replace an existing alarm with the same ID.
             self.alarm_manager.cancel(pending_intent)
 
             if self.sdk >= 23:
@@ -322,7 +317,7 @@ class FletAlarm:
                 )
 
             _log(
-                f"Scheduled: id={alarm_id}, "
+                f"Scheduled successfully: id={alarm_id}, "
                 f"time={scheduled_time}, "
                 f"repeat_weekly={repeat_weekly}"
             )
@@ -330,7 +325,7 @@ class FletAlarm:
             return True
 
         except Exception as exc:
-            _log(f"SET ALARM FAILED: id={alarm_id}: {exc}")
+            _log(f"SET ALARM FAILED: id={alarm_label}: {exc}")
             raise
 
     # ========================================================
@@ -342,7 +337,9 @@ class FletAlarm:
             alarm_id = int(alarm_id)
 
             if alarm_id <= 0:
-                raise ValueError("alarm_id must be greater than zero")
+                raise ValueError(
+                    "alarm_id must be greater than zero"
+                )
 
             pending_intent = self._get_pending_intent(
                 alarm_id=alarm_id,
@@ -353,22 +350,15 @@ class FletAlarm:
                 self.alarm_manager.cancel(pending_intent)
                 pending_intent.cancel()
 
-            try:
-                NotificationManager = autoclass(
-                    "android.app.NotificationManager"
-                )
-                manager = cast(
-                    "android.app.NotificationManager",
-                    self.context.getSystemService(
-                        self.Context.NOTIFICATION_SERVICE
-                    ),
-                )
+            manager = cast(
+                "android.app.NotificationManager",
+                self.context.getSystemService(
+                    self.Context.NOTIFICATION_SERVICE
+                ),
+            )
 
-                if manager is not None:
-                    manager.cancel(alarm_id)
-
-            except Exception as exc:
-                _log(f"Notification cancellation warning: {exc}")
+            if manager is not None:
+                manager.cancel(alarm_id)
 
             _log(f"Cancelled alarm id={alarm_id}")
             return True
@@ -378,7 +368,7 @@ class FletAlarm:
             return False
 
     # ========================================================
-    # CANCEL ALL
+    # CANCEL ALL ALARMS
     # ========================================================
 
     def cancel_all(self, alarm_ids):
