@@ -1,4 +1,3 @@
-
 package org.digielimu.classalert
 
 import android.app.AlarmManager
@@ -12,6 +11,8 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
@@ -40,6 +41,7 @@ class AlarmReceiver : BroadcastReceiver() {
         private const val CHANNEL_NAME = "Class Alert Alarms"
         private const val WAKELOCK_TAG = "ClassAlert:AlarmTTS"
         private const val WAKELOCK_TIME_MS = 60_000L
+        private const val TTS_TIMEOUT_MS = 15_000L
         private const val WEEK_MS = 7L * 24L * 60L * 60L * 1000L
     }
 
@@ -52,6 +54,16 @@ class AlarmReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             "unavailable"
         }
+    }
+
+    // The scheduled time is sent as a String from Python (Pyjnius can
+    // mis-type large numbers) and as a String from scheduleNextWeek().
+    // A Long extra is still accepted as a fallback.
+    private fun readScheduledAt(intent: Intent): Long {
+        val asString = intent.getStringExtra(EXTRA_SCHEDULED_AT_MS)
+        val parsed = asString?.trim()?.toLongOrNull()
+        if (parsed != null && parsed > 0L) return parsed
+        return intent.getLongExtra(EXTRA_SCHEDULED_AT_MS, 0L)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -99,10 +111,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val suppliedSpeech = intent.getStringExtra(EXTRA_SPEECH_TEXT)
         val speech = suppliedSpeech?.trim()?.ifEmpty { null } ?: body
 
-        val scheduledAt = intent.getLongExtra(
-            EXTRA_SCHEDULED_AT_MS,
-            0L
-        )
+        val scheduledAt = readScheduledAt(intent)
 
         val repeatWeekly = intent.getBooleanExtra(
             EXTRA_REPEAT_WEEKLY,
@@ -153,20 +162,33 @@ class AlarmReceiver : BroadcastReceiver() {
         )
 
         Log.i(TAG, "TTS_REQUESTED: alarmId=$alarmId, text=$speech")
-        speak(context.applicationContext, speech)
+
+        // Keep the receiver (and its process) alive until speech finishes.
+        // goAsync() must be called inside onReceive.
+        val pending = goAsync()
+        speak(context.applicationContext, speech, pending)
     }
 
     // ============================================================
     // TEXT TO SPEECH
     // ============================================================
 
-    private fun speak(context: Context, text: String) {
+    private fun speak(
+        context: Context,
+        text: String,
+        pending: PendingResult?
+    ) {
         val speechText = text.trim()
 
         Log.i(TAG, "TTS_TEXT_RECEIVED: $speechText")
 
         if (speechText.isEmpty()) {
             Log.e(TAG, "TTS_SKIPPED: speech text is empty")
+            try {
+                pending?.finish()
+            } catch (e: Exception) {
+                Log.w(TAG, "PendingResult finish failed", e)
+            }
             return
         }
 
@@ -211,6 +233,14 @@ class AlarmReceiver : BroadcastReceiver() {
             } catch (e: Exception) {
                 Log.w(TAG, "Wake lock release failed", e)
             }
+
+            try {
+                pending?.finish()
+            } catch (e: Exception) {
+                Log.w(TAG, "PendingResult finish failed", e)
+            }
+
+            Log.i(TAG, "TTS_FINISHED_CLEANUP")
         }
 
         try {
@@ -351,6 +381,16 @@ class AlarmReceiver : BroadcastReceiver() {
                 }
             }
 
+            // Safety net: never leave the receiver / wake lock hanging if
+            // TTS init or speech never completes.
+            val timeoutEngine = engine
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!finished.get()) {
+                    Log.w(TAG, "TTS_TIMEOUT: forcing cleanup")
+                    finish(timeoutEngine)
+                }
+            }, TTS_TIMEOUT_MS)
+
         } catch (e: Exception) {
             Log.e(TAG, "TTS_CREATE_ERROR", e)
             finish(null)
@@ -468,7 +508,8 @@ class AlarmReceiver : BroadcastReceiver() {
                 putExtra(EXTRA_NOTIFICATION_TITLE, title)
                 putExtra(EXTRA_NOTIFICATION_BODY, body)
                 putExtra(EXTRA_SPEECH_TEXT, speech)
-                putExtra(EXTRA_SCHEDULED_AT_MS, nextTime)
+                // String, to match what Python sends
+                putExtra(EXTRA_SCHEDULED_AT_MS, nextTime.toString())
                 putExtra(EXTRA_REPEAT_WEEKLY, true)
             }
 
