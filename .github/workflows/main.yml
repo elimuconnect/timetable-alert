@@ -244,9 +244,11 @@ jobs:
             # TIP: compare these flags with the "flutter build apk ..." line
             # in the verbose log of the previous step, and add any extra
             # flags that flet used (for example --target-platform).
-            "$FLUTTER_BIN" build apk --release \
+            "$FLUTTER_BIN" build apk \
+              --target-platform android-arm64,android-x64,android-arm \
               --build-name 0.1.2 \
-              --build-number 1
+              --no-version-check \
+              --suppress-analytics
           )
 
           APK_SRC="build/flutter/build/app/outputs/flutter-apk/app-release.apk"
@@ -256,8 +258,11 @@ jobs:
             exit 1
           }
 
+          # Replace flet's plain APK (Class-Alert.apk) with the native build so
+          # the artifact contains exactly one APK and it always has the receiver.
           mkdir -p build/apk
-          cp "$APK_SRC" build/apk/ClassAlert-native.apk
+          rm -f build/apk/*.apk build/apk/*.sha1
+          cp "$APK_SRC" build/apk/Class-Alert.apk
           ls -la build/apk
 
       # ------------------------------------------------------------
@@ -270,7 +275,7 @@ jobs:
           set -euo pipefail
 
           AAPT2="$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -n 1)"
-          APK="build/apk/ClassAlert-native.apk"
+          APK="build/apk/Class-Alert.apk"
 
           "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml > manifest_dump.txt
 
