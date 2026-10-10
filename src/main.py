@@ -1,4 +1,4 @@
-import asyncio 
+import asyncio
 import base64
 import json
 import os
@@ -767,7 +767,8 @@ class SmartAlert:
 
         _log(
             f"ALARM: registering id={nt_id}; "
-            f"time={when.isoformat()}"
+            f"time={when.isoformat()}; "
+            f"speech={speech_text!r}"
         )
 
         alarm = FletAlarm()
