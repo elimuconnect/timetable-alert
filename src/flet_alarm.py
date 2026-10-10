@@ -374,3 +374,60 @@ class FletAlarm:
                 success = False
 
         return success
+
+
+# ============================================================
+# IN-APP DIAGNOSTICS (no adb needed)
+# ============================================================
+
+NATIVE_LOG_NAME = "native_alarm.log"
+TEST_ALARM_ID = 990001
+
+
+def read_native_log(max_chars=3500):
+    """Return the tail of the log written by the Kotlin AlarmReceiver."""
+    try:
+        alarm = FletAlarm()
+        path = (
+            str(alarm.context.getFilesDir().getAbsolutePath())
+            + "/"
+            + NATIVE_LOG_NAME
+        )
+
+        with open(path, "r", encoding="utf-8", errors="replace") as stream:
+            text = stream.read().strip()
+
+        if not text:
+            return "Native log is empty: the AlarmReceiver has not run yet."
+
+        return text[-max_chars:]
+
+    except FileNotFoundError:
+        return (
+            "No native log yet.\n\nThe AlarmReceiver has never run in "
+            "this install. Either the alarm did not fire, or the receiver "
+            "is not inside this APK."
+        )
+    except Exception as exc:
+        _log_exception("read_native_log failed", exc)
+        return f"Could not read native log: {exc!r}"
+
+
+def schedule_native_test(seconds=20):
+    """Schedule one non-repeating alarm a few seconds from now."""
+    alarm = FletAlarm()
+    when = datetime.datetime.now() + datetime.timedelta(seconds=seconds)
+
+    alarm.set_alarm(
+        when,
+        TEST_ALARM_ID,
+        title="Native alarm test",
+        message="If you see this, the receiver ran.",
+        speech_text="Native alarm test. Teacher, in two minutes go to class.",
+        repeat_weekly=False,
+    )
+
+    return (
+        f"Test alarm set for {when:%H:%M:%S}. "
+        "Lock the phone and wait, then open the native log."
+    )
