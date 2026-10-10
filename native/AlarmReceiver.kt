@@ -108,7 +108,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
         val body = intent.getStringExtra(
             EXTRA_NOTIFICATION_BODY
-        ) ?: "Kindly teacher, your lesson is starting. Go to class"
+        ) ?: "Kindly teacher,Your lesson is starting. Go to class"
 
         val suppliedSpeech = intent.getStringExtra(EXTRA_SPEECH_TEXT)
         val speech = suppliedSpeech?.trim()?.ifEmpty { null } ?: body
@@ -539,19 +539,19 @@ class AlarmReceiver : BroadcastReceiver() {
                 return
             }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    nextTime,
-                    pendingIntent
-                )
-            } else {
-                alarmManager.setExact(
-                    AlarmManager.RTC_WAKEUP,
-                    nextTime,
-                    pendingIntent
-                )
-            }
+            // setAlarmClock is treated by Android as a real alarm clock:
+            // it fires reliably in Doze and when the phone is locked.
+            val showIntent = context.packageManager
+                .getLaunchIntentForPackage(context.packageName)
+                ?.let { launch ->
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    PendingIntent.getActivity(context, 0, launch, flags)
+                }
+
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(nextTime, showIntent),
+                pendingIntent
+            )
 
             NativeLog.i(
                 TAG,
