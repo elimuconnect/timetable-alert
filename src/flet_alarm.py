@@ -247,6 +247,58 @@ class FletAlarm:
         )
 
     # ========================================================
+    # ALARM-CLOCK STYLE SCHEDULING
+    # ========================================================
+
+    def _show_intent(self):
+        """PendingIntent that opens the app when the alarm icon is tapped."""
+        try:
+            launch = self.context.getPackageManager().getLaunchIntentForPackage(
+                self.package_name
+            )
+            if launch is None:
+                return None
+            launch.addFlags(int(self.Intent.FLAG_ACTIVITY_NEW_TASK))
+            return self.PendingIntent.getActivity(
+                self.context,
+                0,
+                launch,
+                self._pending_intent_flags(update=True),
+            )
+        except Exception as exc:
+            _log_exception("Could not build show intent", exc)
+            return None
+
+    def _set_alarm_clock(self, trigger_ms, pending_intent):
+        """Use setAlarmClock: Android treats it as a real alarm clock.
+
+        Unlike setExactAndAllowWhileIdle it is not rate-limited in Doze and
+        is the most reliable way to fire while the phone is asleep or locked.
+        Falls back to setExactAndAllowWhileIdle if it fails.
+        """
+        try:
+            AlarmClockInfo = autoclass("android.app.AlarmManager$AlarmClockInfo")
+            info = AlarmClockInfo(int(trigger_ms), self._show_intent())
+            self.alarm_manager.setAlarmClock(info, pending_intent)
+            _log(f"setAlarmClock used; trigger_ms={trigger_ms}")
+            return
+        except Exception as exc:
+            _log_exception("setAlarmClock failed; using fallback", exc)
+
+        if self.sdk >= 23:
+            self.alarm_manager.setExactAndAllowWhileIdle(
+                self.AlarmManager.RTC_WAKEUP,
+                trigger_ms,
+                pending_intent,
+            )
+        else:
+            self.alarm_manager.setExact(
+                self.AlarmManager.RTC_WAKEUP,
+                trigger_ms,
+                pending_intent,
+            )
+
+    # ========================================================
     # SCHEDULE ALARM
     # ========================================================
 
@@ -299,19 +351,7 @@ class FletAlarm:
 
         try:
             self.alarm_manager.cancel(pending_intent)
-
-            if self.sdk >= 23:
-                self.alarm_manager.setExactAndAllowWhileIdle(
-                    self.AlarmManager.RTC_WAKEUP,
-                    trigger_ms,
-                    pending_intent,
-                )
-            else:
-                self.alarm_manager.setExact(
-                    self.AlarmManager.RTC_WAKEUP,
-                    trigger_ms,
-                    pending_intent,
-                )
+            self._set_alarm_clock(trigger_ms, pending_intent)
 
         except Exception as exc:
             _log_exception(f"SET ALARM FAILED; id={alarm_id}", exc)
@@ -413,8 +453,37 @@ def read_native_log(max_chars=3500):
         return f"Could not read native log: {exc!r}"
 
 
+DIRECT_TEST_ID = 990002
+
+
+def fire_receiver_now():
+    """Send a broadcast straight to AlarmReceiver, bypassing AlarmManager.
+
+    If the receiver is inside the APK this runs it immediately. If the native
+    log stays empty after this, the receiver is NOT in the installed APK.
+    """
+    alarm = FletAlarm()
+    intent = alarm._build_intent(
+        alarm_id=DIRECT_TEST_ID,
+        title="Direct trigger test",
+        message="The receiver was triggered directly.",
+        speech_text="Direct trigger test. If you hear this, the receiver and voice work.",
+        scheduled_at_ms=int(time.time() * 1000),
+        repeat_weekly=False,
+    )
+    alarm.context.sendBroadcast(intent)
+    _log("Direct broadcast sent to AlarmReceiver")
+
+
 def schedule_native_test(seconds=20):
-    """Schedule one non-repeating alarm a few seconds from now."""
+    """Fire the receiver directly, then schedule one alarm a few seconds out."""
+    direct_note = "Direct trigger sent."
+    try:
+        fire_receiver_now()
+    except Exception as exc:
+        _log_exception("Direct trigger failed", exc)
+        direct_note = f"Direct trigger FAILED: {exc!r}."
+
     alarm = FletAlarm()
     when = datetime.datetime.now() + datetime.timedelta(seconds=seconds)
 
@@ -428,6 +497,6 @@ def schedule_native_test(seconds=20):
     )
 
     return (
-        f"Test alarm set for {when:%H:%M:%S}. "
+        f"{direct_note} Alarm set for {when:%H:%M:%S}. "
         "Lock the phone and wait, then open the native log."
     )
