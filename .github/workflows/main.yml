@@ -177,6 +177,17 @@ jobs:
             echo "WARNING: src/index.html not found"
           }
 
+          if [ "${{ matrix.name }}" = "apk" ]; then
+            test -f native/AlarmReceiver.kt || {
+              echo "ERROR: native/AlarmReceiver.kt not found"
+              exit 1
+            }
+            test -f tools/inject_native.py || {
+              echo "ERROR: tools/inject_native.py not found"
+              exit 1
+            }
+          fi
+
           echo "Project files checked successfully."
 
       # ------------------------------------------------------------
@@ -186,6 +197,82 @@ jobs:
         shell: bash
         run: |
           uv run ${{ matrix.build_cmd }} --yes --verbose
+
+      # ------------------------------------------------------------
+      # INJECT NATIVE ALARM RECEIVER + REBUILD (APK ONLY)
+      # flet build ignores the repo's android/ folder, so the Kotlin
+      # receiver and its <receiver> manifest entry are added to the
+      # generated Flutter project (build/flutter) and the APK is rebuilt.
+      # ------------------------------------------------------------
+      - name: Inject native receiver and rebuild APK
+        if: matrix.name == 'apk'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FLUTTER_BIN="$(find "$HOME/flutter" -maxdepth 4 -type f -name flutter -path '*/bin/*' | head -n 1)"
+          if [ -z "$FLUTTER_BIN" ]; then
+            echo "ERROR: Flutter SDK not found under $HOME/flutter"
+            ls -la "$HOME" || true
+            exit 1
+          fi
+          echo "Using Flutter: $FLUTTER_BIN"
+
+          test -d build/flutter || {
+            echo "ERROR: build/flutter not found (flet build layout changed?)"
+            ls -la build || true
+            exit 1
+          }
+
+          python tools/inject_native.py build/flutter native/AlarmReceiver.kt
+
+          echo "---- Patched manifest ----"
+          cat build/flutter/android/app/src/main/AndroidManifest.xml
+
+          (
+            cd build/flutter
+            # TIP: compare these flags with the "flutter build apk ..." line
+            # in the verbose log of the previous step, and add any extra
+            # flags that flet used (for example --target-platform).
+            "$FLUTTER_BIN" build apk --release
+          )
+
+          APK_SRC="build/flutter/build/app/outputs/flutter-apk/app-release.apk"
+          test -f "$APK_SRC" || {
+            echo "ERROR: rebuilt APK not found at $APK_SRC"
+            find build/flutter/build/app/outputs -name '*.apk' || true
+            exit 1
+          }
+
+          mkdir -p build/apk
+          cp "$APK_SRC" build/apk/ClassAlert-native.apk
+          ls -la build/apk
+
+      # ------------------------------------------------------------
+      # VERIFY THE RECEIVER IS REALLY INSIDE THE APK
+      # ------------------------------------------------------------
+      - name: Verify receiver is in the APK
+        if: matrix.name == 'apk'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          AAPT2="$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort | tail -n 1)"
+          APK="build/apk/ClassAlert-native.apk"
+
+          "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml > manifest_dump.txt
+
+          grep -q "org.digielimu.classalert.AlarmReceiver" manifest_dump.txt \
+            || { echo "FAIL: receiver missing from APK manifest"; exit 1; }
+          grep -q "TTS_SERVICE" manifest_dump.txt \
+            || { echo "FAIL: TTS_SERVICE query missing from APK manifest"; exit 1; }
+
+          rm -rf dex_check && mkdir dex_check
+          unzip -q -o "$APK" 'classes*.dex' -d dex_check
+          grep -rla "org/digielimu/classalert/AlarmReceiver" dex_check \
+            || { echo "FAIL: AlarmReceiver class missing from APK dex"; exit 1; }
+
+          echo "OK: AlarmReceiver is in the APK manifest and dex."
 
       # ------------------------------------------------------------
       # UPLOAD APK / BUILD ARTIFACT
