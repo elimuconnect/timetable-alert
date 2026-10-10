@@ -1,5 +1,4 @@
-
-import asyncio 
+import asyncio
 import base64
 import json
 import os
@@ -159,7 +158,17 @@ class SmartAlert:
                     tooltip="Test notification and voice",
                     icon_color=ft.Colors.GREEN,
                     on_click=self._on_test_clicked,
-                )
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.ALARM_ADD,
+                    tooltip="Native alarm test (20 s)",
+                    on_click=lambda _: self._native_test(),
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.ARTICLE,
+                    tooltip="Native alarm log",
+                    on_click=lambda _: self._show_native_log(),
+                ),
             ],
         )
 
@@ -218,6 +227,51 @@ class SmartAlert:
                     )
                 )
             )
+
+    # ========================================================
+    # NATIVE ALARM DIAGNOSTICS
+    # ========================================================
+
+    def _native_test(self):
+        try:
+            from flet_alarm import schedule_native_test
+
+            self._toast(schedule_native_test(20), ok=True)
+        except Exception as exc:
+            _log(
+                f"NATIVE TEST ERROR: {exc!r}\n"
+                + traceback.format_exc()
+            )
+            self._toast(f"Native test failed: {exc!r}", ok=False)
+
+    def _show_native_log(self):
+        try:
+            from flet_alarm import read_native_log
+
+            text = read_native_log()
+        except Exception as exc:
+            _log(
+                f"NATIVE LOG ERROR: {exc!r}\n"
+                + traceback.format_exc()
+            )
+            text = f"Could not read native log: {exc!r}"
+
+        self.page.show_dialog(
+            ft.AlertDialog(
+                title=ft.Text("Native alarm log"),
+                content=ft.Column(
+                    [ft.Text(text, selectable=True, size=11)],
+                    scroll=ft.ScrollMode.AUTO,
+                    height=400,
+                ),
+                actions=[
+                    ft.TextButton(
+                        "OK",
+                        on_click=lambda _: self.close_dialog(),
+                    )
+                ],
+            )
+        )
 
     def _on_test_clicked(self, _):
         self._start_task(
