@@ -18,6 +18,7 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,21 +68,22 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        NativeLog.init(context)
         val action = intent.action
 
-        Log.i(
+        NativeLog.i(
             TAG,
             "ALARM_RECEIVER_ENTERED: action=$action, " +
                 "deviceTime=${localTime(System.currentTimeMillis())}"
         )
 
         if (action == null) {
-            Log.e(TAG, "ALARM_ERROR: Intent action is null")
+            NativeLog.e(TAG, "ALARM_ERROR: Intent action is null")
             return
         }
 
         if (!action.startsWith(ACTION_PREFIX)) {
-            Log.w(TAG, "ALARM_IGNORED: Unexpected action=$action")
+            NativeLog.w(TAG, "ALARM_IGNORED: Unexpected action=$action")
             return
         }
 
@@ -91,7 +93,7 @@ class AlarmReceiver : BroadcastReceiver() {
         )
 
         if (alarmId <= 0) {
-            Log.e(TAG, "ALARM_ERROR: Invalid alarm ID")
+            NativeLog.e(TAG, "ALARM_ERROR: Invalid alarm ID")
             return
         }
 
@@ -118,21 +120,21 @@ class AlarmReceiver : BroadcastReceiver() {
             false
         )
 
-        Log.i(TAG, "ALARM_TRIGGERED: id=$alarmId")
-        Log.i(TAG, "ALARM_ACTION: $action")
-        Log.i(TAG, "ALARM_SCHEDULED_TIME: ${localTime(scheduledAt)}")
-        Log.i(TAG, "ALARM_CURRENT_TIME: ${localTime(System.currentTimeMillis())}")
-        Log.i(TAG, "ALARM_NOTIFICATION_TITLE: $title")
-        Log.i(TAG, "ALARM_NOTIFICATION_BODY: $body")
-        Log.i(
+        NativeLog.i(TAG, "ALARM_TRIGGERED: id=$alarmId")
+        NativeLog.i(TAG, "ALARM_ACTION: $action")
+        NativeLog.i(TAG, "ALARM_SCHEDULED_TIME: ${localTime(scheduledAt)}")
+        NativeLog.i(TAG, "ALARM_CURRENT_TIME: ${localTime(System.currentTimeMillis())}")
+        NativeLog.i(TAG, "ALARM_NOTIFICATION_TITLE: $title")
+        NativeLog.i(TAG, "ALARM_NOTIFICATION_BODY: $body")
+        NativeLog.i(
             TAG,
             "ALARM_SPEECH_EXTRA: ${suppliedSpeech ?: "<MISSING>"}"
         )
-        Log.i(TAG, "ANNOUNCEMENT_TEXT: $speech")
-        Log.i(TAG, "ALARM_REPEAT_WEEKLY: $repeatWeekly")
+        NativeLog.i(TAG, "ANNOUNCEMENT_TEXT: $speech")
+        NativeLog.i(TAG, "ALARM_REPEAT_WEEKLY: $repeatWeekly")
 
         if (suppliedSpeech.isNullOrBlank()) {
-            Log.w(
+            NativeLog.w(
                 TAG,
                 "SPEECH_WARNING: speech_text missing; using notification body"
             )
@@ -161,7 +163,7 @@ class AlarmReceiver : BroadcastReceiver() {
             body = body
         )
 
-        Log.i(TAG, "TTS_REQUESTED: alarmId=$alarmId, text=$speech")
+        NativeLog.i(TAG, "TTS_REQUESTED: alarmId=$alarmId, text=$speech")
 
         // Keep the receiver (and its process) alive until speech finishes.
         // goAsync() must be called inside onReceive.
@@ -180,14 +182,14 @@ class AlarmReceiver : BroadcastReceiver() {
     ) {
         val speechText = text.trim()
 
-        Log.i(TAG, "TTS_TEXT_RECEIVED: $speechText")
+        NativeLog.i(TAG, "TTS_TEXT_RECEIVED: $speechText")
 
         if (speechText.isEmpty()) {
-            Log.e(TAG, "TTS_SKIPPED: speech text is empty")
+            NativeLog.e(TAG, "TTS_SKIPPED: speech text is empty")
             try {
                 pending?.finish()
             } catch (e: Exception) {
-                Log.w(TAG, "PendingResult finish failed", e)
+                NativeLog.w(TAG, "PendingResult finish failed", e)
             }
             return
         }
@@ -205,7 +207,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 acquire(WAKELOCK_TIME_MS)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "TTS_WAKELOCK_ERROR", e)
+            NativeLog.e(TAG, "TTS_WAKELOCK_ERROR", e)
             null
         }
 
@@ -217,13 +219,13 @@ class AlarmReceiver : BroadcastReceiver() {
             try {
                 tts?.stop()
             } catch (e: Exception) {
-                Log.w(TAG, "TTS stop failed", e)
+                NativeLog.w(TAG, "TTS stop failed", e)
             }
 
             try {
                 tts?.shutdown()
             } catch (e: Exception) {
-                Log.w(TAG, "TTS shutdown failed", e)
+                NativeLog.w(TAG, "TTS shutdown failed", e)
             }
 
             try {
@@ -231,16 +233,16 @@ class AlarmReceiver : BroadcastReceiver() {
                     wakeLock.release()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Wake lock release failed", e)
+                NativeLog.w(TAG, "Wake lock release failed", e)
             }
 
             try {
                 pending?.finish()
             } catch (e: Exception) {
-                Log.w(TAG, "PendingResult finish failed", e)
+                NativeLog.w(TAG, "PendingResult finish failed", e)
             }
 
-            Log.i(TAG, "TTS_FINISHED_CLEANUP")
+            NativeLog.i(TAG, "TTS_FINISHED_CLEANUP")
         }
 
         try {
@@ -250,18 +252,18 @@ class AlarmReceiver : BroadcastReceiver() {
                 val tts = engine
 
                 if (tts == null) {
-                    Log.e(TAG, "TTS_INIT_ERROR: engine unavailable in callback")
+                    NativeLog.e(TAG, "TTS_INIT_ERROR: engine unavailable in callback")
                     finish(null)
                     return@TextToSpeech
                 }
 
                 if (status != TextToSpeech.SUCCESS) {
-                    Log.e(TAG, "TTS_INIT_ERROR: status=$status")
+                    NativeLog.e(TAG, "TTS_INIT_ERROR: status=$status")
                     finish(tts)
                     return@TextToSpeech
                 }
 
-                Log.i(TAG, "TTS_INITIALIZED: status=$status")
+                NativeLog.i(TAG, "TTS_INITIALIZED: status=$status")
 
                 try {
                     var languageResult = tts.setLanguage(Locale("en", "KE"))
@@ -287,12 +289,12 @@ class AlarmReceiver : BroadcastReceiver() {
                         languageResult == TextToSpeech.LANG_MISSING_DATA ||
                         languageResult == TextToSpeech.LANG_NOT_SUPPORTED
                     ) {
-                        Log.e(TAG, "TTS_LANGUAGE_ERROR: no supported language")
+                        NativeLog.e(TAG, "TTS_LANGUAGE_ERROR: no supported language")
                         finish(tts)
                         return@TextToSpeech
                     }
 
-                    Log.i(
+                    NativeLog.i(
                         TAG,
                         "TTS_LANGUAGE_SELECTED: $selectedLanguage, result=$languageResult"
                     )
@@ -314,14 +316,14 @@ class AlarmReceiver : BroadcastReceiver() {
                     tts.setOnUtteranceProgressListener(
                         object : UtteranceProgressListener() {
                             override fun onStart(utteranceId: String?) {
-                                Log.i(
+                                NativeLog.i(
                                     TAG,
                                     "TTS_STARTED: id=$utteranceId, text=$speechText"
                                 )
                             }
 
                             override fun onDone(utteranceId: String?) {
-                                Log.i(
+                                NativeLog.i(
                                     TAG,
                                     "TTS_COMPLETED: id=$utteranceId"
                                 )
@@ -330,7 +332,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
                             @Deprecated("Deprecated in Java")
                             override fun onError(utteranceId: String?) {
-                                Log.e(TAG, "TTS_ERROR: id=$utteranceId")
+                                NativeLog.e(TAG, "TTS_ERROR: id=$utteranceId")
                                 finish(tts)
                             }
 
@@ -338,7 +340,7 @@ class AlarmReceiver : BroadcastReceiver() {
                                 utteranceId: String?,
                                 errorCode: Int
                             ) {
-                                Log.e(
+                                NativeLog.e(
                                     TAG,
                                     "TTS_ERROR: id=$utteranceId, code=$errorCode"
                                 )
@@ -357,7 +359,7 @@ class AlarmReceiver : BroadcastReceiver() {
                         )
                     }
 
-                    Log.i(
+                    NativeLog.i(
                         TAG,
                         "TTS_SPEAK_CALL: id=$utteranceId, text=$speechText"
                     )
@@ -369,14 +371,14 @@ class AlarmReceiver : BroadcastReceiver() {
                         utteranceId
                     )
 
-                    Log.i(TAG, "TTS_SPEAK_RESULT: $result")
+                    NativeLog.i(TAG, "TTS_SPEAK_RESULT: $result")
 
                     if (result == TextToSpeech.ERROR) {
-                        Log.e(TAG, "TTS_SPEAK_ERROR: speak returned ERROR")
+                        NativeLog.e(TAG, "TTS_SPEAK_ERROR: speak returned ERROR")
                         finish(tts)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "TTS_PROCESSING_ERROR", e)
+                    NativeLog.e(TAG, "TTS_PROCESSING_ERROR", e)
                     finish(tts)
                 }
             }
@@ -386,13 +388,13 @@ class AlarmReceiver : BroadcastReceiver() {
             val timeoutEngine = engine
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!finished.get()) {
-                    Log.w(TAG, "TTS_TIMEOUT: forcing cleanup")
+                    NativeLog.w(TAG, "TTS_TIMEOUT: forcing cleanup")
                     finish(timeoutEngine)
                 }
             }, TTS_TIMEOUT_MS)
 
         } catch (e: Exception) {
-            Log.e(TAG, "TTS_CREATE_ERROR", e)
+            NativeLog.e(TAG, "TTS_CREATE_ERROR", e)
             finish(null)
         }
     }
@@ -411,7 +413,7 @@ class AlarmReceiver : BroadcastReceiver() {
             val manager = context.getSystemService(
                 Context.NOTIFICATION_SERVICE
             ) as? NotificationManager ?: run {
-                Log.e(TAG, "NOTIFICATION_ERROR: manager unavailable")
+                NativeLog.e(TAG, "NOTIFICATION_ERROR: manager unavailable")
                 return
             }
 
@@ -460,12 +462,12 @@ class AlarmReceiver : BroadcastReceiver() {
 
             manager.notify(notificationId, notification)
 
-            Log.i(
+            NativeLog.i(
                 TAG,
                 "NOTIFICATION_DISPLAYED: id=$notificationId, title=$title, body=$body"
             )
         } catch (e: Exception) {
-            Log.e(TAG, "NOTIFICATION_DISPLAY_ERROR", e)
+            NativeLog.e(TAG, "NOTIFICATION_DISPLAY_ERROR", e)
         }
     }
 
@@ -486,7 +488,7 @@ class AlarmReceiver : BroadcastReceiver() {
             val alarmManager = context.getSystemService(
                 Context.ALARM_SERVICE
             ) as? AlarmManager ?: run {
-                Log.e(TAG, "WEEKLY_RESCHEDULE_ERROR: AlarmManager unavailable")
+                NativeLog.e(TAG, "WEEKLY_RESCHEDULE_ERROR: AlarmManager unavailable")
                 return
             }
 
@@ -530,7 +532,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 !alarmManager.canScheduleExactAlarms()
             ) {
-                Log.e(
+                NativeLog.e(
                     TAG,
                     "WEEKLY_RESCHEDULE_ERROR: exact-alarm permission unavailable"
                 )
@@ -551,13 +553,69 @@ class AlarmReceiver : BroadcastReceiver() {
                 )
             }
 
-            Log.i(
+            NativeLog.i(
                 TAG,
                 "WEEKLY_ALARM_SCHEDULED: id=$alarmId, " +
                     "nextTime=${localTime(nextTime)}"
             )
         } catch (e: Exception) {
-            Log.e(TAG, "WEEKLY_RESCHEDULE_ERROR", e)
+            NativeLog.e(TAG, "WEEKLY_RESCHEDULE_ERROR", e)
         }
+    }
+}
+
+// ================================================================
+// NATIVE LOG: writes to logcat AND to files/native_alarm.log so the
+// Python side can show it inside the app (no adb needed).
+// ================================================================
+
+object NativeLog {
+    private const val FILE_NAME = "native_alarm.log"
+    private const val MAX_BYTES = 100_000L
+    private val lock = Any()
+
+    @Volatile
+    private var logFile: File? = null
+
+    fun init(context: Context) {
+        try {
+            logFile = File(context.applicationContext.filesDir, FILE_NAME)
+        } catch (e: Exception) {
+            Log.e("ClassAlertAlarm", "NativeLog init failed", e)
+        }
+    }
+
+    private fun write(level: String, message: String, tr: Throwable?) {
+        val file = logFile ?: return
+        try {
+            synchronized(lock) {
+                if (file.exists() && file.length() > MAX_BYTES) {
+                    file.delete()
+                }
+                val stamp = SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss.SSS",
+                    Locale.getDefault()
+                ).format(Date())
+                val extra = if (tr != null) " | ${tr.javaClass.simpleName}: ${tr.message}" else ""
+                file.appendText("$stamp $level $message$extra\n")
+            }
+        } catch (e: Exception) {
+            Log.e("ClassAlertAlarm", "NativeLog write failed", e)
+        }
+    }
+
+    fun i(tag: String, message: String) {
+        Log.i(tag, message)
+        write("I", message, null)
+    }
+
+    fun w(tag: String, message: String, tr: Throwable? = null) {
+        if (tr != null) Log.w(tag, message, tr) else Log.w(tag, message)
+        write("W", message, tr)
+    }
+
+    fun e(tag: String, message: String, tr: Throwable? = null) {
+        if (tr != null) Log.e(tag, message, tr) else Log.e(tag, message)
+        write("E", message, tr)
     }
 }
