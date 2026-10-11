@@ -23,6 +23,17 @@ RECEIVER_XML = (
     '            android:exported="false" />\n    '
 )
 
+SERVICE_XML = (
+    "\n        <service\n"
+    f'            android:name="{PACKAGE}.SpeechService"\n'
+    '            android:exported="false"\n'
+    '            android:foregroundServiceType="specialUse">\n'
+    "            <property\n"
+    '                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n'
+    '                android:value="spoken_class_alert" />\n'
+    "        </service>\n    "
+)
+
 TTS_INTENT_XML = (
     "\n        <intent>\n"
     '            <action android:name="android.intent.action.TTS_SERVICE" />\n'
@@ -75,6 +86,15 @@ def main():
         print("Added <receiver> to manifest")
     else:
         print("<receiver> already present")
+
+    if f"{PACKAGE}.SpeechService" not in text:
+        end_app = text.rfind("</application>")
+        if end_app == -1:
+            fail("</application> not found in manifest")
+        text = text[:end_app] + SERVICE_XML + text[end_app:]
+        print("Added <service> SpeechService to manifest")
+    else:
+        print("<service> already present")
 
     if "android.intent.action.TTS_SERVICE" not in text:
         if "</queries>" in text:
