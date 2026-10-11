@@ -1,4 +1,4 @@
-name: Build Flet App 
+name: Build Flet App
 
 on:
   push:
@@ -196,7 +196,21 @@ jobs:
       - name: Build app
         shell: bash
         run: |
-          uv run ${{ matrix.build_cmd }} --yes --verbose
+          # The Python distribution download inside Gradle sometimes fails
+          # on a bad network response. Retry from a clean build folder.
+          for attempt in 1 2 3; do
+            echo "=== Build attempt $attempt of 3 ==="
+            if uv run ${{ matrix.build_cmd }} --yes --verbose; then
+              exit 0
+            fi
+            echo "Build attempt $attempt failed."
+            if [ "$attempt" -lt 3 ]; then
+              rm -rf build
+              sleep 30
+            fi
+          done
+          echo "ERROR: build failed after 3 attempts"
+          exit 1
 
       # ------------------------------------------------------------
       # INJECT NATIVE ALARM RECEIVER + REBUILD (APK ONLY)
@@ -283,11 +297,15 @@ jobs:
             || { echo "FAIL: receiver missing from APK manifest"; exit 1; }
           grep -q "TTS_SERVICE" manifest_dump.txt \
             || { echo "FAIL: TTS_SERVICE query missing from APK manifest"; exit 1; }
+          grep -q "org.digielimu.classalert.SpeechService" manifest_dump.txt \
+            || { echo "FAIL: SpeechService missing from APK manifest"; exit 1; }
 
           rm -rf dex_check && mkdir dex_check
           unzip -q -o "$APK" 'classes*.dex' -d dex_check
           grep -rla "org/digielimu/classalert/AlarmReceiver" dex_check \
             || { echo "FAIL: AlarmReceiver class missing from APK dex"; exit 1; }
+          grep -rla "org/digielimu/classalert/SpeechService" dex_check \
+            || { echo "FAIL: SpeechService class missing from APK dex"; exit 1; }
 
           echo "OK: AlarmReceiver is in the APK manifest and dex."
 
