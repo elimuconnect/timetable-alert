@@ -19,7 +19,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -43,7 +42,9 @@ class AlarmReceiver : BroadcastReceiver() {
         const val EXTRA_REPEAT_WEEKLY = "repeat_weekly"
 
         private const val TAG = "ClassAlertAlarm"
-        private const val CHANNEL_ID = "class_alert_alarms"
+        // v2: channel settings are frozen once created, so a new id is
+        // needed to apply the silent (no ringtone) setting.
+        private const val CHANNEL_ID = "class_alert_alarms_v2"
         private const val CHANNEL_NAME = "Class Alert Alarms"
         private const val WAKELOCK_TAG = "ClassAlert:AlarmTTS"
         private const val WAKELOCK_TIME_MS = 60_000L
@@ -170,20 +171,25 @@ class AlarmReceiver : BroadcastReceiver() {
 
         NativeLog.i(TAG, "TTS_REQUESTED: alarmId=$alarmId, text=$speech")
 
-        // Best effort: a foreground service raises the process priority and
-        // holds a wake lock while we speak. It never replaces or blocks speech.
-        startKeepAlive(context.applicationContext, alarmId)
-
-        // Speak directly from the receiver. goAsync() keeps the receiver
-        // (and its process) alive until speech finishes.
-        val pending = goAsync()
-        speak(context.applicationContext, speech, pending)
+        // Preferred path: the foreground service speaks, because the
+        // receiver's goAsync() window is too short when the phone is locked.
+        // If the service cannot start, fall back to speaking from the receiver.
+        val started = startKeepAlive(context.applicationContext, alarmId, speech)
+        if (!started) {
+            val pending = goAsync()
+            speak(context.applicationContext, speech, pending)
+        }
     }
 
-    private fun startKeepAlive(context: Context, alarmId: Int) {
-        try {
+    private fun startKeepAlive(
+        context: Context,
+        alarmId: Int,
+        speech: String
+    ): Boolean {
+        return try {
             val serviceIntent = Intent(context, KeepAliveService::class.java)
                 .putExtra(EXTRA_ALARM_ID, alarmId)
+                .putExtra(EXTRA_SPEECH_TEXT, speech)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(serviceIntent)
@@ -192,13 +198,15 @@ class AlarmReceiver : BroadcastReceiver() {
             }
 
             NativeLog.i(TAG, "KEEPALIVE_REQUESTED: alarmId=$alarmId")
+            true
         } catch (t: Throwable) {
             NativeLog.w(TAG, "KEEPALIVE_START_FAILED", t)
+            false
         }
     }
 
     // ============================================================
-    // TEXT TO SPEECH
+    // TEXT TO SPEECH (fallback path, runs inside the receiver)
     // ============================================================
 
     private fun speak(
@@ -452,15 +460,9 @@ class AlarmReceiver : BroadcastReceiver() {
                     description = "Smart timetable lesson alerts"
                     enableVibration(true)
 
-                    setSound(
-                        Settings.System.DEFAULT_ALARM_ALERT_URI,
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(
-                                AudioAttributes.CONTENT_TYPE_SONIFICATION
-                            )
-                            .build()
-                    )
+                    // Silent: the spoken announcement is the sound.
+                    // A ringtone here would compete with text-to-speech.
+                    setSound(null, null)
                 }
 
                 manager.createNotificationChannel(channel)
@@ -591,9 +593,10 @@ class AlarmReceiver : BroadcastReceiver() {
 }
 
 // ================================================================
-// KEEP-ALIVE SERVICE: does NOT speak. It only runs in the foreground for
-// a short time so Android keeps the app process and the voice engine
-// running while the phone is locked. Speech itself stays in the receiver.
+// KEEP-ALIVE SERVICE: runs in the foreground so Android keeps the app
+// process and the voice engine alive while the phone is locked. It now
+// also speaks the announcement, because the receiver's goAsync() window
+// is too short for TTS to start on a locked / dozing phone.
 // ================================================================
 
 class KeepAliveService : Service() {
@@ -602,12 +605,15 @@ class KeepAliveService : Service() {
         private const val TAG = "ClassAlertKeepAlive"
         private const val CHANNEL_ID = "class_alert_keepalive"
         private const val NOTIFICATION_ID = 7001
-        private const val HOLD_MS = 30_000L
+        // Safety net only: the service stops itself when speech finishes.
+        private const val HOLD_MS = 45_000L
         private const val WAKELOCK_MS = 60_000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var wakeLock: PowerManager.WakeLock? = null
+    private var tts: TextToSpeech? = null
+    private var focusRequest: AudioFocusRequest? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -621,6 +627,17 @@ class KeepAliveService : Service() {
             handler.postDelayed({ stopKeepAlive() }, HOLD_MS)
 
             NativeLog.i(TAG, "KEEPALIVE_RUNNING")
+
+            val speech = intent
+                ?.getStringExtra(AlarmReceiver.EXTRA_SPEECH_TEXT)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+
+            if (speech != null) {
+                speakNow(speech)
+            } else {
+                NativeLog.w(TAG, "SVC_NO_SPEECH: no speech text supplied")
+            }
         } catch (t: Throwable) {
             NativeLog.e(TAG, "KEEPALIVE_ERROR", t)
             stopKeepAlive()
@@ -630,9 +647,167 @@ class KeepAliveService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        releaseSpeech()
         releaseWakeLock()
         super.onDestroy()
     }
+
+    // ============================================================
+    // SPEECH (runs inside the foreground service)
+    // ============================================================
+
+    private fun speakNow(text: String) {
+        // If an earlier announcement is still running, replace it.
+        releaseSpeech()
+
+        NativeLog.i(TAG, "SVC_TTS_REQUESTED: $text")
+
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+        try {
+            val audioManager =
+                getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                ).setAudioAttributes(attrs).build()
+
+                focusRequest = request
+                val focusResult = audioManager.requestAudioFocus(request)
+                NativeLog.i(TAG, "SVC_AUDIO_FOCUS_RESULT: $focusResult")
+            }
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_AUDIO_FOCUS_ERROR", e)
+        }
+
+        var engine: TextToSpeech? = null
+
+        engine = TextToSpeech(applicationContext) { status ->
+            val t = engine
+
+            if (t == null || status != TextToSpeech.SUCCESS) {
+                NativeLog.e(TAG, "SVC_TTS_INIT_ERROR: status=$status")
+                handler.post { stopKeepAlive() }
+                return@TextToSpeech
+            }
+
+            try {
+                var result = t.setLanguage(Locale("en", "KE"))
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    result = t.setLanguage(Locale.UK)
+                }
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    result = t.setLanguage(Locale.US)
+                }
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    NativeLog.e(TAG, "SVC_TTS_LANGUAGE_ERROR: no supported language")
+                    handler.post { stopKeepAlive() }
+                    return@TextToSpeech
+                }
+
+                t.setSpeechRate(0.95f)
+                t.setPitch(1.0f)
+                t.setAudioAttributes(attrs)
+
+                t.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            NativeLog.i(TAG, "SVC_TTS_STARTED: $text")
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            NativeLog.i(TAG, "SVC_TTS_DONE")
+                            handler.post { stopKeepAlive() }
+                        }
+
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            NativeLog.e(TAG, "SVC_TTS_ERROR: id=$utteranceId")
+                            handler.post { stopKeepAlive() }
+                        }
+
+                        override fun onError(utteranceId: String?, errorCode: Int) {
+                            NativeLog.e(
+                                TAG,
+                                "SVC_TTS_ERROR: id=$utteranceId, code=$errorCode"
+                            )
+                            handler.post { stopKeepAlive() }
+                        }
+                    }
+                )
+
+                val utteranceId = "svc_${System.currentTimeMillis()}"
+
+                val params = Bundle().apply {
+                    putString(
+                        TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
+                        utteranceId
+                    )
+                }
+
+                val speakResult = t.speak(
+                    text,
+                    TextToSpeech.QUEUE_FLUSH,
+                    params,
+                    utteranceId
+                )
+
+                NativeLog.i(TAG, "SVC_TTS_SPEAK_RESULT: $speakResult")
+
+                if (speakResult == TextToSpeech.ERROR) {
+                    handler.post { stopKeepAlive() }
+                }
+            } catch (e: Exception) {
+                NativeLog.e(TAG, "SVC_TTS_PROCESSING_ERROR", e)
+                handler.post { stopKeepAlive() }
+            }
+        }
+
+        tts = engine
+    }
+
+    private fun releaseSpeech() {
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_TTS_SHUTDOWN_FAILED", e)
+        }
+        tts = null
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest?.let {
+                    val audioManager =
+                        getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    audioManager.abandonAudioFocusRequest(it)
+                }
+            }
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_AUDIO_FOCUS_RELEASE_FAILED", e)
+        }
+        focusRequest = null
+    }
+
+    // ============================================================
+    // FOREGROUND / WAKE LOCK
+    // ============================================================
 
     private fun enterForeground() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE)
@@ -701,6 +876,7 @@ class KeepAliveService : Service() {
 
     private fun stopKeepAlive() {
         handler.removeCallbacksAndMessages(null)
+        releaseSpeech()
         releaseWakeLock()
 
         try {
