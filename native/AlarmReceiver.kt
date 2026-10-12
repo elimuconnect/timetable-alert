@@ -114,7 +114,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
         val body = intent.getStringExtra(
             EXTRA_NOTIFICATION_BODY
-        ) ?: "Your lesson is starting."
+        ) ?: "Kindly teacher,Your lesson is starting.Go to class"
 
         val suppliedSpeech = intent.getStringExtra(EXTRA_SPEECH_TEXT)
         val speech = suppliedSpeech?.trim()?.ifEmpty { null } ?: body
