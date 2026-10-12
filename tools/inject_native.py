@@ -48,11 +48,15 @@ QUERIES_BLOCK = (
 
 # Permissions required for the foreground service, wake lock and alarms.
 PERMISSIONS = [
-    "android.permission.FOREGROUND_SERVICE",
-    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
-    "android.permission.WAKE_LOCK",
-    "android.permission.POST_NOTIFICATIONS",
-    "android.permission.SCHEDULE_EXACT_ALARM",
+   "android.permission.POST_NOTIFICATIONS",
+"android.permission.SCHEDULE_EXACT_ALARM",
+"android.permission.USE_EXACT_ALARM",
+"android.permission.WAKE_LOCK",
+"com.android.alarm.permission.SET_ALARM",
+"android.permission.RECEIVE_BOOT_COMPLETED",
+"android.permission.SYSTEM_ALERT_WINDOW",
+"android.permission.MANAGE_EXTERNAL_STORAGE",
+"android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
 ]
 
 
