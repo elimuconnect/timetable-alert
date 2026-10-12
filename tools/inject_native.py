@@ -25,12 +25,12 @@ RECEIVER_XML = (
 
 SERVICE_XML = (
     "\n        <service\n"
-    f'            android:name="{PACKAGE}.SpeechService"\n'
+    f'            android:name="{PACKAGE}.KeepAliveService"\n'
     '            android:exported="false"\n'
     '            android:foregroundServiceType="specialUse">\n'
     "            <property\n"
     '                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n'
-    '                android:value="spoken_class_alert" />\n'
+    '                android:value="lesson_alert_keepalive" />\n'
     "        </service>\n    "
 )
 
@@ -87,12 +87,12 @@ def main():
     else:
         print("<receiver> already present")
 
-    if f"{PACKAGE}.SpeechService" not in text:
+    if f"{PACKAGE}.KeepAliveService" not in text:
         end_app = text.rfind("</application>")
         if end_app == -1:
             fail("</application> not found in manifest")
         text = text[:end_app] + SERVICE_XML + text[end_app:]
-        print("Added <service> SpeechService to manifest")
+        print("Added <service> KeepAliveService to manifest")
     else:
         print("<service> already present")
 
