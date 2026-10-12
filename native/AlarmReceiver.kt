@@ -1,502 +1,946 @@
-import datetime
-import time
-import traceback
+package org.digielimu.classalert
 
-from jnius import autoclass, cast
+import android.app.AlarmManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.util.Log
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
+class AlarmReceiver : BroadcastReceiver() {
 
-# ============================================================
-# CONSTANTS
-# ============================================================
+    companion object {
+        const val ACTION_PREFIX = "com.zaimtech.CLASS_ALERT_ALARM_V2_"
 
-RECEIVER_CLASS = "org.digielimu.classalert.AlarmReceiver"
-ACTION_PREFIX = "com.zaimtech.CLASS_ALERT_ALARM_"
+        const val EXTRA_ALARM_ID = "alarm_id"
+        const val EXTRA_NOTIFICATION_ID = "notification_id"
+        const val EXTRA_NOTIFICATION_TITLE = "notification_title"
+        const val EXTRA_NOTIFICATION_BODY = "notification_body"
+        const val EXTRA_SPEECH_TEXT = "speech_text"
+        const val EXTRA_SCHEDULED_AT_MS = "scheduled_at_ms"
+        const val EXTRA_REPEAT_WEEKLY = "repeat_weekly"
 
-EXTRA_ALARM_ID = "alarm_id"
-EXTRA_NOTIFICATION_ID = "notification_id"
-EXTRA_NOTIFICATION_TITLE = "notification_title"
-EXTRA_NOTIFICATION_BODY = "notification_body"
-EXTRA_SPEECH_TEXT = "speech_text"
-EXTRA_SCHEDULED_AT_MS = "scheduled_at_ms"
-EXTRA_REPEAT_WEEKLY = "repeat_weekly"
+        private const val TAG = "ClassAlertAlarm"
+        // v2: channel settings are frozen once created, so a new id is
+        // needed to apply the silent (no ringtone) setting.
+        private const val CHANNEL_ID = "class_alert_alarms_v2"
+        private const val CHANNEL_NAME = "Class Alert Alarms"
+        private const val WAKELOCK_TAG = "ClassAlert:AlarmTTS"
+        private const val WAKELOCK_TIME_MS = 60_000L
+        private const val TTS_TIMEOUT_MS = 15_000L
+        private const val WEEK_MS = 7L * 24L * 60L * 60L * 1000L
+    }
 
+    private fun localTime(timestamp: Long): String {
+        return try {
+            SimpleDateFormat(
+                "yyyy-MM-dd HH:mm:ss",
+                Locale.getDefault()
+            ).format(Date(timestamp))
+        } catch (e: Exception) {
+            "unavailable"
+        }
+    }
 
-# ============================================================
-# LOGGING
-# ============================================================
+    // The scheduled time is sent as a String from Python (Pyjnius can
+    // mis-type large numbers) and as a String from scheduleNextWeek().
+    // A Long extra is still accepted as a fallback.
+    private fun readScheduledAt(intent: Intent): Long {
+        val asString = intent.getStringExtra(EXTRA_SCHEDULED_AT_MS)
+        val parsed = asString?.trim()?.toLongOrNull()
+        if (parsed != null && parsed > 0L) return parsed
+        return intent.getLongExtra(EXTRA_SCHEDULED_AT_MS, 0L)
+    }
 
-def _log(message):
-    try:
-        print(f"[FletAlarm] {message}", flush=True)
-    except Exception:
-        pass
+    override fun onReceive(context: Context, intent: Intent) {
+        NativeLog.init(context)
+        val action = intent.action
 
-
-def _log_exception(label, exc):
-    _log(f"{label}: {type(exc).__name__}: {exc}")
-    try:
-        _log(traceback.format_exc())
-    except Exception:
-        pass
-
-
-# ============================================================
-# ANDROID APPLICATION CONTEXT
-# ============================================================
-
-def _get_application_context():
-    """Obtain the Android application context."""
-    ActivityThread = autoclass("android.app.ActivityThread")
-    application = ActivityThread.currentApplication()
-
-    if application is None:
-        raise RuntimeError(
-            "Android currentApplication() returned None."
+        NativeLog.i(
+            TAG,
+            "ALARM_RECEIVER_ENTERED: action=$action, " +
+                "deviceTime=${localTime(System.currentTimeMillis())}"
         )
 
-    context = application.getApplicationContext()
-
-    if context is None:
-        raise RuntimeError(
-            "Android returned a null application context."
-        )
-
-    return cast("android.content.Context", context)
-
-
-# ============================================================
-# FLET ALARM
-# ============================================================
-
-class FletAlarm:
-    def __init__(self):
-        try:
-            _log("Initializing Android alarm services...")
-
-            # Load Build.VERSION as its own Java nested class.
-            self.VERSION = autoclass("android.os.Build$VERSION")
-            self.sdk = int(self.VERSION.SDK_INT)
-            _log(f"Android SDK loaded: {self.sdk}")
-
-            self.Context = autoclass("android.content.Context")
-            self.Intent = autoclass("android.content.Intent")
-            self.PendingIntent = autoclass("android.app.PendingIntent")
-            self.AlarmManager = autoclass("android.app.AlarmManager")
-            self.Settings = autoclass("android.provider.Settings")
-            self.Uri = autoclass("android.net.Uri")
-            self.NotificationManager = autoclass(
-                "android.app.NotificationManager"
-            )
-
-            _log("Android framework classes loaded")
-
-            self.context = _get_application_context()
-            self.package_name = str(self.context.getPackageName())
-
-            service = self.context.getSystemService(
-                self.Context.ALARM_SERVICE
-            )
-
-            if service is None:
-                raise RuntimeError(
-                    "Android AlarmManager service is unavailable."
-                )
-
-            self.alarm_manager = cast(
-                "android.app.AlarmManager",
-                service,
-            )
-
-            _log(
-                f"Initialized successfully; "
-                f"package={self.package_name}; sdk={self.sdk}"
-            )
-
-        except Exception as exc:
-            _log_exception("INITIALIZATION FAILED", exc)
-            raise
-
-    # ========================================================
-    # EXACT ALARM PERMISSION
-    # ========================================================
-
-    def can_schedule_exact_alarms(self):
-        if self.sdk < 31:
-            return True
-
-        try:
-            return bool(
-                self.alarm_manager.canScheduleExactAlarms()
-            )
-        except Exception as exc:
-            _log_exception("Exact alarm permission check failed", exc)
-            return False
-
-    def open_exact_alarm_settings(self):
-        if self.sdk < 31:
-            return True
-
-        try:
-            intent = self.Intent(
-                self.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM
-            )
-            intent.setData(
-                self.Uri.parse(f"package:{self.package_name}")
-            )
-            intent.addFlags(
-                int(self.Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            self.context.startActivity(intent)
-
-            _log("Opened exact alarm settings")
-            return True
-
-        except Exception as exc:
-            _log_exception("Could not open exact alarm settings", exc)
-            return False
-
-    # ========================================================
-    # PENDING INTENT FLAGS
-    # ========================================================
-
-    def _pending_intent_flags(self, update=False, no_create=False):
-        flags = 0
-
-        if self.sdk >= 23:
-            flags |= int(self.PendingIntent.FLAG_IMMUTABLE)
-
-        if update:
-            flags |= int(self.PendingIntent.FLAG_UPDATE_CURRENT)
-
-        if no_create:
-            flags |= int(self.PendingIntent.FLAG_NO_CREATE)
-
-        return flags
-
-    # ========================================================
-    # BUILD RECEIVER INTENT
-    # ========================================================
-
-    def _build_intent(
-        self,
-        alarm_id,
-        title=None,
-        message=None,
-        speech_text=None,
-        scheduled_at_ms=None,
-        repeat_weekly=True,
-    ):
-        alarm_id = int(alarm_id)
-        intent = self.Intent()
-
-        intent.setClassName(self.context, RECEIVER_CLASS)
-        intent.setAction(f"{ACTION_PREFIX}{alarm_id}")
-
-        intent.putExtra(EXTRA_ALARM_ID, alarm_id)
-        intent.putExtra(EXTRA_NOTIFICATION_ID, alarm_id)
-
-        if title is not None:
-            intent.putExtra(EXTRA_NOTIFICATION_TITLE, str(title))
-
-        if message is not None:
-            intent.putExtra(EXTRA_NOTIFICATION_BODY, str(message))
-
-        if speech_text is not None:
-            intent.putExtra(EXTRA_SPEECH_TEXT, str(speech_text))
-
-        if scheduled_at_ms is not None:
-            # Sent as a String: Pyjnius can mis-type large integers
-            # (millisecond timestamps overflow a Java int). The Kotlin
-            # receiver parses this back to a Long.
-            intent.putExtra(
-                EXTRA_SCHEDULED_AT_MS,
-                str(int(scheduled_at_ms)),
-            )
-
-        intent.putExtra(EXTRA_REPEAT_WEEKLY, bool(repeat_weekly))
-        return intent
-
-    def _get_pending_intent(
-        self,
-        alarm_id,
-        update=False,
-        no_create=False,
-        title=None,
-        message=None,
-        speech_text=None,
-        scheduled_at_ms=None,
-        repeat_weekly=True,
-    ):
-        intent = self._build_intent(
-            alarm_id=alarm_id,
-            title=title,
-            message=message,
-            speech_text=speech_text,
-            scheduled_at_ms=scheduled_at_ms,
-            repeat_weekly=repeat_weekly,
-        )
-
-        return self.PendingIntent.getBroadcast(
-            self.context,
-            int(alarm_id),
-            intent,
-            self._pending_intent_flags(
-                update=update,
-                no_create=no_create,
-            ),
-        )
-
-    # ========================================================
-    # ALARM-CLOCK STYLE SCHEDULING
-    # ========================================================
-
-    def _show_intent(self):
-        """PendingIntent that opens the app when the alarm icon is tapped."""
-        try:
-            launch = self.context.getPackageManager().getLaunchIntentForPackage(
-                self.package_name
-            )
-            if launch is None:
-                return None
-            launch.addFlags(int(self.Intent.FLAG_ACTIVITY_NEW_TASK))
-            return self.PendingIntent.getActivity(
-                self.context,
-                0,
-                launch,
-                self._pending_intent_flags(update=True),
-            )
-        except Exception as exc:
-            _log_exception("Could not build show intent", exc)
-            return None
-
-    def _set_alarm_clock(self, trigger_ms, pending_intent):
-        """Use setAlarmClock: Android treats it as a real alarm clock.
-
-        Unlike setExactAndAllowWhileIdle it is not rate-limited in Doze and
-        is the most reliable way to fire while the phone is asleep or locked.
-        Falls back to setExactAndAllowWhileIdle if it fails.
-        """
-        try:
-            AlarmClockInfo = autoclass("android.app.AlarmManager$AlarmClockInfo")
-            info = AlarmClockInfo(int(trigger_ms), self._show_intent())
-            self.alarm_manager.setAlarmClock(info, pending_intent)
-            _log(f"setAlarmClock used; trigger_ms={trigger_ms}")
+        if (action == null) {
+            NativeLog.e(TAG, "ALARM_ERROR: Intent action is null")
             return
-        except Exception as exc:
-            _log_exception("setAlarmClock failed; using fallback", exc)
+        }
 
-        if self.sdk >= 23:
-            self.alarm_manager.setExactAndAllowWhileIdle(
-                self.AlarmManager.RTC_WAKEUP,
-                trigger_ms,
-                pending_intent,
-            )
-        else:
-            self.alarm_manager.setExact(
-                self.AlarmManager.RTC_WAKEUP,
-                trigger_ms,
-                pending_intent,
-            )
+        if (!action.startsWith(ACTION_PREFIX)) {
+            NativeLog.w(TAG, "ALARM_IGNORED: Unexpected action=$action")
+            return
+        }
 
-    # ========================================================
-    # SCHEDULE ALARM
-    # ========================================================
-
-    def set_alarm(
-        self,
-        scheduled_time,
-        alarm_id,
-        title="Class Reminder",
-        message="Check your timetable.",
-        speech_text="",
-        repeat_weekly=True,
-    ):
-        if not isinstance(scheduled_time, datetime.datetime):
-            raise TypeError(
-                "scheduled_time must be datetime.datetime"
-            )
-
-        alarm_id = int(alarm_id)
-        if alarm_id <= 0:
-            raise ValueError("alarm_id must be greater than zero.")
-
-        trigger_ms = int(scheduled_time.timestamp() * 1000)
-        now_ms = int(time.time() * 1000)
-
-        if trigger_ms <= now_ms:
-            raise ValueError(
-                f"Alarm time is in the past: {scheduled_time.isoformat()}"
-            )
-
-        if not self.can_schedule_exact_alarms():
-            raise PermissionError(
-                "Exact alarms are not permitted. Enable exact-alarm "
-                "access in Android settings."
-            )
-
-        pending_intent = self._get_pending_intent(
-            alarm_id=alarm_id,
-            update=True,
-            title=title,
-            message=message,
-            speech_text=speech_text,
-            scheduled_at_ms=trigger_ms,
-            repeat_weekly=repeat_weekly,
+        val alarmId = intent.getIntExtra(
+            EXTRA_ALARM_ID,
+            action.substringAfterLast("_").toIntOrNull() ?: 0
         )
 
-        if pending_intent is None:
-            raise RuntimeError(
-                "Android failed to create the alarm PendingIntent."
-            )
+        if (alarmId <= 0) {
+            NativeLog.e(TAG, "ALARM_ERROR: Invalid alarm ID")
+            return
+        }
 
-        try:
-            self.alarm_manager.cancel(pending_intent)
-            self._set_alarm_clock(trigger_ms, pending_intent)
-
-        except Exception as exc:
-            _log_exception(f"SET ALARM FAILED; id={alarm_id}", exc)
-            raise
-
-        _log(
-            f"Scheduled id={alarm_id}; "
-            f"time={scheduled_time.isoformat()}; "
-            f"trigger_ms={trigger_ms}; "
-            f"repeat_weekly={bool(repeat_weekly)}"
+        val notificationId = intent.getIntExtra(
+            EXTRA_NOTIFICATION_ID,
+            alarmId
         )
-        return True
 
-    # ========================================================
-    # CANCEL ONE ALARM
-    # ========================================================
+        val title = intent.getStringExtra(
+            EXTRA_NOTIFICATION_TITLE
+        ) ?: "Class Alert"
 
-    def cancel_alarm(self, alarm_id):
-        try:
-            alarm_id = int(alarm_id)
-            if alarm_id <= 0:
-                raise ValueError("alarm_id must be greater than zero.")
+        val body = intent.getStringExtra(
+            EXTRA_NOTIFICATION_BODY
+        ) ?: "Your lesson is starting."
 
-            pending_intent = self._get_pending_intent(
-                alarm_id=alarm_id,
-                no_create=True,
+        val suppliedSpeech = intent.getStringExtra(EXTRA_SPEECH_TEXT)
+        val speech = suppliedSpeech?.trim()?.ifEmpty { null } ?: body
+
+        val scheduledAt = readScheduledAt(intent)
+
+        val repeatWeekly = intent.getBooleanExtra(
+            EXTRA_REPEAT_WEEKLY,
+            false
+        )
+
+        NativeLog.i(TAG, "ALARM_TRIGGERED: id=$alarmId")
+        NativeLog.i(TAG, "ALARM_ACTION: $action")
+        NativeLog.i(TAG, "ALARM_SCHEDULED_TIME: ${localTime(scheduledAt)}")
+        NativeLog.i(TAG, "ALARM_CURRENT_TIME: ${localTime(System.currentTimeMillis())}")
+        NativeLog.i(TAG, "ALARM_NOTIFICATION_TITLE: $title")
+        NativeLog.i(TAG, "ALARM_NOTIFICATION_BODY: $body")
+        NativeLog.i(
+            TAG,
+            "ALARM_SPEECH_EXTRA: ${suppliedSpeech ?: "<MISSING>"}"
+        )
+        NativeLog.i(TAG, "ANNOUNCEMENT_TEXT: $speech")
+        NativeLog.i(TAG, "ALARM_REPEAT_WEEKLY: $repeatWeekly")
+
+        if (suppliedSpeech.isNullOrBlank()) {
+            NativeLog.w(
+                TAG,
+                "SPEECH_WARNING: speech_text missing; using notification body"
+            )
+        }
+
+        if (repeatWeekly) {
+            scheduleNextWeek(
+                context = context.applicationContext,
+                alarmId = alarmId,
+                notificationId = notificationId,
+                title = title,
+                body = body,
+                speech = speech,
+                scheduledAt = if (scheduledAt > 0L) {
+                    scheduledAt
+                } else {
+                    System.currentTimeMillis()
+                }
+            )
+        }
+
+        showNotification(
+            context = context,
+            notificationId = notificationId,
+            title = title,
+            body = body
+        )
+
+        NativeLog.i(TAG, "TTS_REQUESTED: alarmId=$alarmId, text=$speech")
+
+        // Preferred path: the foreground service speaks, because the
+        // receiver's goAsync() window is too short when the phone is locked.
+        // If the service cannot start, fall back to speaking from the receiver.
+        val started = startKeepAlive(context.applicationContext, alarmId, speech)
+        if (!started) {
+            val pending = goAsync()
+            speak(context.applicationContext, speech, pending)
+        }
+    }
+
+    private fun startKeepAlive(
+        context: Context,
+        alarmId: Int,
+        speech: String
+    ): Boolean {
+        return try {
+            val serviceIntent = Intent(context, KeepAliveService::class.java)
+                .putExtra(EXTRA_ALARM_ID, alarmId)
+                .putExtra(EXTRA_SPEECH_TEXT, speech)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+
+            NativeLog.i(TAG, "KEEPALIVE_REQUESTED: alarmId=$alarmId")
+            true
+        } catch (t: Throwable) {
+            NativeLog.w(TAG, "KEEPALIVE_START_FAILED", t)
+            false
+        }
+    }
+
+    // ============================================================
+    // TEXT TO SPEECH (fallback path, runs inside the receiver)
+    // ============================================================
+
+    private fun speak(
+        context: Context,
+        text: String,
+        pending: PendingResult?
+    ) {
+        val speechText = text.trim()
+
+        NativeLog.i(TAG, "TTS_TEXT_RECEIVED: $speechText")
+
+        if (speechText.isEmpty()) {
+            NativeLog.e(TAG, "TTS_SKIPPED: speech text is empty")
+            try {
+                pending?.finish()
+            } catch (e: Exception) {
+                NativeLog.w(TAG, "PendingResult finish failed", e)
+            }
+            return
+        }
+
+        val powerManager = context.getSystemService(
+            Context.POWER_SERVICE
+        ) as? PowerManager
+
+        val wakeLock = try {
+            powerManager?.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                WAKELOCK_TAG
+            )?.apply {
+                setReferenceCounted(false)
+                acquire(WAKELOCK_TIME_MS)
+            }
+        } catch (e: Exception) {
+            NativeLog.e(TAG, "TTS_WAKELOCK_ERROR", e)
+            null
+        }
+
+        val finished = AtomicBoolean(false)
+
+        fun finish(tts: TextToSpeech?) {
+            if (!finished.compareAndSet(false, true)) return
+
+            try {
+                tts?.stop()
+            } catch (e: Exception) {
+                NativeLog.w(TAG, "TTS stop failed", e)
+            }
+
+            try {
+                tts?.shutdown()
+            } catch (e: Exception) {
+                NativeLog.w(TAG, "TTS shutdown failed", e)
+            }
+
+            try {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock.release()
+                }
+            } catch (e: Exception) {
+                NativeLog.w(TAG, "Wake lock release failed", e)
+            }
+
+            try {
+                pending?.finish()
+            } catch (e: Exception) {
+                NativeLog.w(TAG, "PendingResult finish failed", e)
+            }
+
+            NativeLog.i(TAG, "TTS_FINISHED_CLEANUP")
+        }
+
+        try {
+            var engine: TextToSpeech? = null
+
+            engine = TextToSpeech(context) { status ->
+                val tts = engine
+
+                if (tts == null) {
+                    NativeLog.e(TAG, "TTS_INIT_ERROR: engine unavailable in callback")
+                    finish(null)
+                    return@TextToSpeech
+                }
+
+                if (status != TextToSpeech.SUCCESS) {
+                    NativeLog.e(TAG, "TTS_INIT_ERROR: status=$status")
+                    finish(tts)
+                    return@TextToSpeech
+                }
+
+                NativeLog.i(TAG, "TTS_INITIALIZED: status=$status")
+
+                try {
+                    var languageResult = tts.setLanguage(Locale("en", "KE"))
+                    var selectedLanguage = "en-KE"
+
+                    if (
+                        languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                        languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+                        languageResult = tts.setLanguage(Locale.UK)
+                        selectedLanguage = "en-GB"
+                    }
+
+                    if (
+                        languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                        languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+                        languageResult = tts.setLanguage(Locale.US)
+                        selectedLanguage = "en-US"
+                    }
+
+                    if (
+                        languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                        languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+                    ) {
+                        NativeLog.e(TAG, "TTS_LANGUAGE_ERROR: no supported language")
+                        finish(tts)
+                        return@TextToSpeech
+                    }
+
+                    NativeLog.i(
+                        TAG,
+                        "TTS_LANGUAGE_SELECTED: $selectedLanguage, result=$languageResult"
+                    )
+
+                    tts.setSpeechRate(0.95f)
+                    tts.setPitch(1.0f)
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        tts.setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(
+                                    AudioAttributes.CONTENT_TYPE_SPEECH
+                                )
+                                .build()
+                        )
+                    }
+
+                    tts.setOnUtteranceProgressListener(
+                        object : UtteranceProgressListener() {
+                            override fun onStart(utteranceId: String?) {
+                                NativeLog.i(
+                                    TAG,
+                                    "TTS_STARTED: id=$utteranceId, text=$speechText"
+                                )
+                            }
+
+                            override fun onDone(utteranceId: String?) {
+                                NativeLog.i(
+                                    TAG,
+                                    "TTS_COMPLETED: id=$utteranceId"
+                                )
+                                finish(tts)
+                            }
+
+                            @Deprecated("Deprecated in Java")
+                            override fun onError(utteranceId: String?) {
+                                NativeLog.e(TAG, "TTS_ERROR: id=$utteranceId")
+                                finish(tts)
+                            }
+
+                            override fun onError(
+                                utteranceId: String?,
+                                errorCode: Int
+                            ) {
+                                NativeLog.e(
+                                    TAG,
+                                    "TTS_ERROR: id=$utteranceId, code=$errorCode"
+                                )
+                                finish(tts)
+                            }
+                        }
+                    )
+
+                    val utteranceId =
+                        "class_alert_${System.currentTimeMillis()}"
+
+                    val params = Bundle().apply {
+                        putString(
+                            TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
+                            utteranceId
+                        )
+                    }
+
+                    NativeLog.i(
+                        TAG,
+                        "TTS_SPEAK_CALL: id=$utteranceId, text=$speechText"
+                    )
+
+                    val result = tts.speak(
+                        speechText,
+                        TextToSpeech.QUEUE_FLUSH,
+                        params,
+                        utteranceId
+                    )
+
+                    NativeLog.i(TAG, "TTS_SPEAK_RESULT: $result")
+
+                    if (result == TextToSpeech.ERROR) {
+                        NativeLog.e(TAG, "TTS_SPEAK_ERROR: speak returned ERROR")
+                        finish(tts)
+                    }
+                } catch (e: Exception) {
+                    NativeLog.e(TAG, "TTS_PROCESSING_ERROR", e)
+                    finish(tts)
+                }
+            }
+
+            // Safety net: never leave the receiver / wake lock hanging if
+            // TTS init or speech never completes.
+            val timeoutEngine = engine
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!finished.get()) {
+                    NativeLog.w(TAG, "TTS_TIMEOUT: forcing cleanup")
+                    finish(timeoutEngine)
+                }
+            }, TTS_TIMEOUT_MS)
+
+        } catch (e: Exception) {
+            NativeLog.e(TAG, "TTS_CREATE_ERROR", e)
+            finish(null)
+        }
+    }
+
+    // ============================================================
+    // NOTIFICATION
+    // ============================================================
+
+    private fun showNotification(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        body: String
+    ) {
+        try {
+            val manager = context.getSystemService(
+                Context.NOTIFICATION_SERVICE
+            ) as? NotificationManager ?: run {
+                NativeLog.e(TAG, "NOTIFICATION_ERROR: manager unavailable")
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Smart timetable lesson alerts"
+                    enableVibration(true)
+
+                    // Silent: the spoken announcement is the sound.
+                    // A ringtone here would compete with text-to-speech.
+                    setSound(null, null)
+                }
+
+                manager.createNotificationChannel(channel)
+            }
+
+            val builder = if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ) {
+                Notification.Builder(context, CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(context)
+            }
+
+            val notification = builder
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(Notification.BigTextStyle().bigText(body))
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setPriority(Notification.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .build()
+
+            manager.notify(notificationId, notification)
+
+            NativeLog.i(
+                TAG,
+                "NOTIFICATION_DISPLAYED: id=$notificationId, title=$title, body=$body"
+            )
+        } catch (e: Exception) {
+            NativeLog.e(TAG, "NOTIFICATION_DISPLAY_ERROR", e)
+        }
+    }
+
+    // ============================================================
+    // SCHEDULE NEXT WEEK
+    // ============================================================
+
+    private fun scheduleNextWeek(
+        context: Context,
+        alarmId: Int,
+        notificationId: Int,
+        title: String,
+        body: String,
+        speech: String,
+        scheduledAt: Long
+    ) {
+        try {
+            val alarmManager = context.getSystemService(
+                Context.ALARM_SERVICE
+            ) as? AlarmManager ?: run {
+                NativeLog.e(TAG, "WEEKLY_RESCHEDULE_ERROR: AlarmManager unavailable")
+                return
+            }
+
+            var nextTime = scheduledAt + WEEK_MS
+            val now = System.currentTimeMillis()
+
+            while (nextTime <= now) {
+                nextTime += WEEK_MS
+            }
+
+            val nextIntent = Intent(
+                context,
+                AlarmReceiver::class.java
+            ).apply {
+                action = "$ACTION_PREFIX$alarmId"
+
+                putExtra(EXTRA_ALARM_ID, alarmId)
+                putExtra(EXTRA_NOTIFICATION_ID, notificationId)
+                putExtra(EXTRA_NOTIFICATION_TITLE, title)
+                putExtra(EXTRA_NOTIFICATION_BODY, body)
+                putExtra(EXTRA_SPEECH_TEXT, speech)
+                // String, to match what Python sends
+                putExtra(EXTRA_SCHEDULED_AT_MS, nextTime.toString())
+                putExtra(EXTRA_REPEAT_WEEKLY, true)
+            }
+
+            var flags = PendingIntent.FLAG_UPDATE_CURRENT
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags = flags or PendingIntent.FLAG_IMMUTABLE
+            }
+
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                alarmId,
+                nextIntent,
+                flags
             )
 
-            if pending_intent is not None:
-                self.alarm_manager.cancel(pending_intent)
-                pending_intent.cancel()
-
-            manager = self.context.getSystemService(
-                self.Context.NOTIFICATION_SERVICE
-            )
-
-            if manager is not None:
-                manager = cast(
-                    "android.app.NotificationManager",
-                    manager,
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                !alarmManager.canScheduleExactAlarms()
+            ) {
+                NativeLog.e(
+                    TAG,
+                    "WEEKLY_RESCHEDULE_ERROR: exact-alarm permission unavailable"
                 )
-                manager.cancel(alarm_id)
+                return
+            }
 
-            _log(f"Cancelled alarm id={alarm_id}")
-            return True
+            // setAlarmClock is treated by Android as a real alarm clock:
+            // it fires reliably in Doze and when the phone is locked.
+            val showIntent = context.packageManager
+                .getLaunchIntentForPackage(context.packageName)
+                ?.let { launch ->
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    PendingIntent.getActivity(context, 0, launch, flags)
+                }
 
-        except Exception as exc:
-            _log_exception(f"CANCEL ALARM FAILED; id={alarm_id}", exc)
-            return False
+            alarmManager.setAlarmClock(
+                AlarmManager.AlarmClockInfo(nextTime, showIntent),
+                pendingIntent
+            )
 
-    # ========================================================
-    # CANCEL MULTIPLE ALARMS
-    # ========================================================
+            NativeLog.i(
+                TAG,
+                "WEEKLY_ALARM_SCHEDULED: id=$alarmId, " +
+                    "nextTime=${localTime(nextTime)}"
+            )
+        } catch (e: Exception) {
+            NativeLog.e(TAG, "WEEKLY_RESCHEDULE_ERROR", e)
+        }
+    }
+}
 
-    def cancel_all(self, alarm_ids):
-        success = True
+// ================================================================
+// KEEP-ALIVE SERVICE: runs in the foreground so Android keeps the app
+// process and the voice engine alive while the phone is locked. It now
+// also speaks the announcement, because the receiver's goAsync() window
+// is too short for TTS to start on a locked / dozing phone.
+// ================================================================
 
-        for alarm_id in alarm_ids:
-            if not self.cancel_alarm(alarm_id):
-                success = False
+class KeepAliveService : Service() {
 
-        return success
+    companion object {
+        private const val TAG = "ClassAlertKeepAlive"
+        private const val CHANNEL_ID = "class_alert_keepalive"
+        private const val NOTIFICATION_ID = 7001
+        // Safety net only: the service stops itself when speech finishes.
+        private const val HOLD_MS = 45_000L
+        private const val WAKELOCK_MS = 60_000L
+    }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var tts: TextToSpeech? = null
+    private var focusRequest: AudioFocusRequest? = null
 
-# ============================================================
-# IN-APP DIAGNOSTICS (no adb needed)
-# ============================================================
+    override fun onBind(intent: Intent?): IBinder? = null
 
-NATIVE_LOG_NAME = "native_alarm.log"
-TEST_ALARM_ID = 990001
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        try {
+            NativeLog.init(this)
+            enterForeground()
+            acquireWakeLock()
 
+            handler.removeCallbacksAndMessages(null)
+            handler.postDelayed({ stopKeepAlive() }, HOLD_MS)
 
-def read_native_log(max_chars=3500):
-    """Return the tail of the log written by the Kotlin AlarmReceiver."""
-    try:
-        alarm = FletAlarm()
-        path = (
-            str(alarm.context.getFilesDir().getAbsolutePath())
-            + "/"
-            + NATIVE_LOG_NAME
-        )
+            NativeLog.i(TAG, "KEEPALIVE_RUNNING")
 
-        with open(path, "r", encoding="utf-8", errors="replace") as stream:
-            text = stream.read().strip()
+            val speech = intent
+                ?.getStringExtra(AlarmReceiver.EXTRA_SPEECH_TEXT)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
 
-        if not text:
-            return "Native log is empty: the AlarmReceiver has not run yet."
+            if (speech != null) {
+                speakNow(speech)
+            } else {
+                NativeLog.w(TAG, "SVC_NO_SPEECH: no speech text supplied")
+            }
+        } catch (t: Throwable) {
+            NativeLog.e(TAG, "KEEPALIVE_ERROR", t)
+            stopKeepAlive()
+        }
+        return START_NOT_STICKY
+    }
 
-        return text[-max_chars:]
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        releaseSpeech()
+        releaseWakeLock()
+        super.onDestroy()
+    }
 
-    except FileNotFoundError:
-        return (
-            "No native log yet.\n\nThe AlarmReceiver has never run in "
-            "this install. Either the alarm did not fire, or the receiver "
-            "is not inside this APK."
-        )
-    except Exception as exc:
-        _log_exception("read_native_log failed", exc)
-        return f"Could not read native log: {exc!r}"
+    // ============================================================
+    // SPEECH (runs inside the foreground service)
+    // ============================================================
 
+    private fun speakNow(text: String) {
+        // If an earlier announcement is still running, replace it.
+        releaseSpeech()
 
-DIRECT_TEST_ID = 990002
+        NativeLog.i(TAG, "SVC_TTS_REQUESTED: $text")
 
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
 
-def fire_receiver_now():
-    """Send a broadcast straight to AlarmReceiver, bypassing AlarmManager.
+        try {
+            val audioManager =
+                getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-    If the receiver is inside the APK this runs it immediately. If the native
-    log stays empty after this, the receiver is NOT in the installed APK.
-    """
-    alarm = FletAlarm()
-    intent = alarm._build_intent(
-        alarm_id=DIRECT_TEST_ID,
-        title="Direct trigger test",
-        message="The receiver was triggered directly.",
-        speech_text="Direct trigger test. If you hear this, the receiver and voice work.",
-        scheduled_at_ms=int(time.time() * 1000),
-        repeat_weekly=False,
-    )
-    alarm.context.sendBroadcast(intent)
-    _log("Direct broadcast sent to AlarmReceiver")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                ).setAudioAttributes(attrs).build()
 
+                focusRequest = request
+                val focusResult = audioManager.requestAudioFocus(request)
+                NativeLog.i(TAG, "SVC_AUDIO_FOCUS_RESULT: $focusResult")
+            }
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_AUDIO_FOCUS_ERROR", e)
+        }
 
-def schedule_native_test(seconds=20):
-    """Fire the receiver directly, then schedule one alarm a few seconds out."""
-    direct_note = "Direct trigger sent."
-    try:
-        fire_receiver_now()
-    except Exception as exc:
-        _log_exception("Direct trigger failed", exc)
-        direct_note = f"Direct trigger FAILED: {exc!r}."
+        var engine: TextToSpeech? = null
 
-    alarm = FletAlarm()
-    when = datetime.datetime.now() + datetime.timedelta(seconds=seconds)
+        engine = TextToSpeech(applicationContext) { status ->
+            val t = engine
 
-    alarm.set_alarm(
-        when,
-        TEST_ALARM_ID,
-        title="Native alarm test",
-        message="If you see this, the receiver ran.",
-        speech_text="Native alarm test. Teacher, in two minutes go to class.",
-        repeat_weekly=False,
-    )
+            if (t == null || status != TextToSpeech.SUCCESS) {
+                NativeLog.e(TAG, "SVC_TTS_INIT_ERROR: status=$status")
+                handler.post { stopKeepAlive() }
+                return@TextToSpeech
+            }
 
-    return (
-        f"{direct_note} Alarm set for {when:%H:%M:%S}. "
-        "Lock the phone and wait, then open the native log."
-    )
+            try {
+                var result = t.setLanguage(Locale("en", "KE"))
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    result = t.setLanguage(Locale.UK)
+                }
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    result = t.setLanguage(Locale.US)
+                }
+
+                if (
+                    result == TextToSpeech.LANG_MISSING_DATA ||
+                    result == TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
+                    NativeLog.e(TAG, "SVC_TTS_LANGUAGE_ERROR: no supported language")
+                    handler.post { stopKeepAlive() }
+                    return@TextToSpeech
+                }
+
+                t.setSpeechRate(0.95f)
+                t.setPitch(1.0f)
+                t.setAudioAttributes(attrs)
+
+                t.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            NativeLog.i(TAG, "SVC_TTS_STARTED: $text")
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            NativeLog.i(TAG, "SVC_TTS_DONE")
+                            handler.post { stopKeepAlive() }
+                        }
+
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            NativeLog.e(TAG, "SVC_TTS_ERROR: id=$utteranceId")
+                            handler.post { stopKeepAlive() }
+                        }
+
+                        override fun onError(utteranceId: String?, errorCode: Int) {
+                            NativeLog.e(
+                                TAG,
+                                "SVC_TTS_ERROR: id=$utteranceId, code=$errorCode"
+                            )
+                            handler.post { stopKeepAlive() }
+                        }
+                    }
+                )
+
+                val utteranceId = "svc_${System.currentTimeMillis()}"
+
+                val params = Bundle().apply {
+                    putString(
+                        TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
+                        utteranceId
+                    )
+                }
+
+                val speakResult = t.speak(
+                    text,
+                    TextToSpeech.QUEUE_FLUSH,
+                    params,
+                    utteranceId
+                )
+
+                NativeLog.i(TAG, "SVC_TTS_SPEAK_RESULT: $speakResult")
+
+                if (speakResult == TextToSpeech.ERROR) {
+                    handler.post { stopKeepAlive() }
+                }
+            } catch (e: Exception) {
+                NativeLog.e(TAG, "SVC_TTS_PROCESSING_ERROR", e)
+                handler.post { stopKeepAlive() }
+            }
+        }
+
+        tts = engine
+    }
+
+    private fun releaseSpeech() {
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_TTS_SHUTDOWN_FAILED", e)
+        }
+        tts = null
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest?.let {
+                    val audioManager =
+                        getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    audioManager.abandonAudioFocusRequest(it)
+                }
+            }
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "SVC_AUDIO_FOCUS_RELEASE_FAILED", e)
+        }
+        focusRequest = null
+    }
+
+    // ============================================================
+    // FOREGROUND / WAKE LOCK
+    // ============================================================
+
+    private fun enterForeground() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE)
+            as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Class Alert background",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+            )
+        }
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        val notification = builder
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle("Class Alert")
+            .setContentText("Lesson reminder in progress")
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ClassAlert:KeepAlive"
+            ).apply {
+                setReferenceCounted(false)
+                acquire(WAKELOCK_MS)
+            }
+        } catch (e: Exception) {
+            NativeLog.e(TAG, "KEEPALIVE_WAKELOCK_ERROR", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "KEEPALIVE_WAKELOCK_RELEASE_FAILED", e)
+        }
+        wakeLock = null
+    }
+
+    private fun stopKeepAlive() {
+        handler.removeCallbacksAndMessages(null)
+        releaseSpeech()
+        releaseWakeLock()
+
+        try {
+            stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            NativeLog.w(TAG, "KEEPALIVE_STOP_FOREGROUND_FAILED", e)
+        }
+        stopSelf()
+        NativeLog.i(TAG, "KEEPALIVE_STOPPED")
+    }
+}
+
+// ================================================================
+// NATIVE LOG: writes to logcat AND to files/native_alarm.log so the
+// Python side can show it inside the app (no adb needed).
+// ================================================================
+
+object NativeLog {
+    private const val FILE_NAME = "native_alarm.log"
+    private const val MAX_BYTES = 100_000L
+    private val lock = Any()
+
+    @Volatile
+    private var logFile: File? = null
+
+    fun init(context: Context) {
+        try {
+            logFile = File(context.applicationContext.filesDir, FILE_NAME)
+        } catch (e: Exception) {
+            Log.e("ClassAlertAlarm", "NativeLog init failed", e)
+        }
+    }
+
+    private fun write(level: String, message: String, tr: Throwable?) {
+        val file = logFile ?: return
+        try {
+            synchronized(lock) {
+                if (file.exists() && file.length() > MAX_BYTES) {
+                    file.delete()
+                }
+                val stamp = SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss.SSS",
+                    Locale.getDefault()
+                ).format(Date())
+                val extra = if (tr != null) " | ${tr.javaClass.simpleName}: ${tr.message}" else ""
+                file.appendText("$stamp $level $message$extra\n")
+            }
+        } catch (e: Exception) {
+            Log.e("ClassAlertAlarm", "NativeLog write failed", e)
+        }
+    }
+
+    fun i(tag: String, message: String) {
+        Log.i(tag, message)
+        write("I", message, null)
+    }
+
+    fun w(tag: String, message: String, tr: Throwable? = null) {
+        if (tr != null) Log.w(tag, message, tr) else Log.w(tag, message)
+        write("W", message, tr)
+    }
+
+    fun e(tag: String, message: String, tr: Throwable? = null) {
+        if (tr != null) Log.e(tag, message, tr) else Log.e(tag, message)
+        write("E", message, tr)
+    }
+}
