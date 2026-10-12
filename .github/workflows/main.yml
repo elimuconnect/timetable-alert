@@ -297,15 +297,15 @@ jobs:
             || { echo "FAIL: receiver missing from APK manifest"; exit 1; }
           grep -q "TTS_SERVICE" manifest_dump.txt \
             || { echo "FAIL: TTS_SERVICE query missing from APK manifest"; exit 1; }
-          grep -q "org.digielimu.classalert.SpeechService" manifest_dump.txt \
-            || { echo "FAIL: SpeechService missing from APK manifest"; exit 1; }
+          grep -q "org.digielimu.classalert.KeepAliveService" manifest_dump.txt \
+            || { echo "FAIL: KeepAliveService missing from APK manifest"; exit 1; }
 
           rm -rf dex_check && mkdir dex_check
           unzip -q -o "$APK" 'classes*.dex' -d dex_check
           grep -rla "org/digielimu/classalert/AlarmReceiver" dex_check \
             || { echo "FAIL: AlarmReceiver class missing from APK dex"; exit 1; }
-          grep -rla "org/digielimu/classalert/SpeechService" dex_check \
-            || { echo "FAIL: SpeechService class missing from APK dex"; exit 1; }
+          grep -rla "org/digielimu/classalert/KeepAliveService" dex_check \
+            || { echo "FAIL: KeepAliveService class missing from APK dex"; exit 1; }
 
           echo "OK: AlarmReceiver is in the APK manifest and dex."
 
