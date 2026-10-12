@@ -46,6 +46,15 @@ QUERIES_BLOCK = (
     "</queries>\n\n"
 )
 
+# Permissions required for the foreground service, wake lock and alarms.
+PERMISSIONS = [
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+    "android.permission.WAKE_LOCK",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.SCHEDULE_EXACT_ALARM",
+]
+
 
 def fail(message):
     print(f"ERROR: {message}")
@@ -109,6 +118,24 @@ def main():
             print("Added new <queries> block with TTS_SERVICE")
     else:
         print("TTS_SERVICE query already present")
+
+    # ---- 2b. Add required permissions (skip any already present) ----
+    for permission in PERMISSIONS:
+        if f'android:name="{permission}"' in text:
+            print(f"Permission already present: {permission}")
+            continue
+
+        app_start = re.search(r"<application\b", text)
+        if app_start is None:
+            fail("<application> not found in manifest")
+
+        index = app_start.start()
+        text = (
+            text[:index]
+            + f'<uses-permission android:name="{permission}" />\n    '
+            + text[index:]
+        )
+        print(f"Added permission: {permission}")
 
     manifest_path.write_text(text, encoding="utf-8")
 
